@@ -4,8 +4,10 @@ import com.blindnav.app.ml.DetectedObject
 import com.blindnav.app.ml.ThreatLevel
 
 class ThreatPrioritizer(
-    private val feedbackEngine: FeedbackEngine,
-    private val alertCooldownMs: Long = 3000L
+    private val feedbackEngine: IFeedbackEngine,
+    private val spatialSoundEngine: SpatialSoundEngine? = null,
+    private val alertCooldownMs: Long = 3200L,
+    private val urgentAlertCooldownMs: Long = 2000L
 ) {
 
     private val lastAlertTimestamps = mutableMapOf<String, Long>()
@@ -25,9 +27,17 @@ class ThreatPrioritizer(
         val lastTimestamp = lastAlertTimestamps[objectKey] ?: 0L
 
         val isUrgent = topThreat.threatLevel == ThreatLevel.DANGER
-        val isCooldownPassed = (now - lastTimestamp) > alertCooldownMs
+        val requiredCooldown = if (isUrgent) urgentAlertCooldownMs else alertCooldownMs
+        val isCooldownPassed = (now - lastTimestamp) > requiredCooldown
 
-        if (isUrgent || isCooldownPassed) {
+        // Instant spatial audio cue for reactive directional awareness
+        spatialSoundEngine?.playSpatialCue(
+            position = topThreat.position,
+            threatLevel = topThreat.threatLevel,
+            distanceMeters = topThreat.distanceMeters
+        )
+
+        if (isCooldownPassed) {
             lastAlertTimestamps[objectKey] = now
             dispatchFeedback(topThreat)
         }

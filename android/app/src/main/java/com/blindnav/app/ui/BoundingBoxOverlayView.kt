@@ -18,36 +18,60 @@ class BoundingBoxOverlayView @JvmOverloads constructor(
 
     private var detectedObjects = emptyList<DetectedObject>()
 
-    private val dangerPaint = Paint().apply {
-        color = Color.RED
-        style = Paint.Style.STROKE
-        strokeWidth = 10f
-        isAntiAlias = true
-    }
-
-    private val cautionPaint = Paint().apply {
-        color = Color.parseColor("#FFA500") // Orange
+    private val dangerStrokePaint = Paint().apply {
+        color = Color.parseColor("#FF1744")
         style = Paint.Style.STROKE
         strokeWidth = 8f
         isAntiAlias = true
     }
 
-    private val safePaint = Paint().apply {
-        color = Color.GREEN
-        style = Paint.Style.STROKE
-        strokeWidth = 6f
+    private val dangerFillPaint = Paint().apply {
+        color = Color.parseColor("#33FF1744")
+        style = Paint.Style.FILL
         isAntiAlias = true
     }
 
-    private val textBackgroundPaint = Paint().apply {
-        color = Color.BLACK
+    private val cautionStrokePaint = Paint().apply {
+        color = Color.parseColor("#FFD600")
+        style = Paint.Style.STROKE
+        strokeWidth = 7f
+        isAntiAlias = true
+    }
+
+    private val cautionFillPaint = Paint().apply {
+        color = Color.parseColor("#26FFD600")
         style = Paint.Style.FILL
-        alpha = 180
+        isAntiAlias = true
+    }
+
+    private val safeStrokePaint = Paint().apply {
+        color = Color.parseColor("#00E676")
+        style = Paint.Style.STROKE
+        strokeWidth = 5f
+        isAntiAlias = true
+    }
+
+    private val safeFillPaint = Paint().apply {
+        color = Color.parseColor("#1A00E676")
+        style = Paint.Style.FILL
+        isAntiAlias = true
+    }
+
+    private val badgeBackgroundPaint = Paint().apply {
+        color = Color.parseColor("#E60D1117")
+        style = Paint.Style.FILL
+        isAntiAlias = true
+    }
+
+    private val badgeBorderPaint = Paint().apply {
+        style = Paint.Style.STROKE
+        strokeWidth = 3f
+        isAntiAlias = true
     }
 
     private val textPaint = Paint().apply {
         color = Color.WHITE
-        textSize = 42f
+        textSize = 38f
         isAntiAlias = true
         isFakeBoldText = true
     }
@@ -72,27 +96,35 @@ class BoundingBoxOverlayView @JvmOverloads constructor(
                 box.bottom * viewHeight
             )
 
-            val boxPaint = when (obj.threatLevel) {
-                ThreatLevel.DANGER -> dangerPaint
-                ThreatLevel.CAUTION -> cautionPaint
-                ThreatLevel.SAFE -> safePaint
+            val (strokePaint, fillPaint, badgeColor) = when (obj.threatLevel) {
+                ThreatLevel.DANGER -> Triple(dangerStrokePaint, dangerFillPaint, Color.parseColor("#FF1744"))
+                ThreatLevel.CAUTION -> Triple(cautionStrokePaint, cautionFillPaint, Color.parseColor("#FFD600"))
+                ThreatLevel.SAFE -> Triple(safeStrokePaint, safeFillPaint, Color.parseColor("#00E676"))
             }
 
-            canvas.drawRect(scaledRect, boxPaint)
+            // Draw semi-transparent rounded box fill
+            canvas.drawRoundRect(scaledRect, 18f, 18f, fillPaint)
+            // Draw neon stroke border
+            canvas.drawRoundRect(scaledRect, 18f, 18f, strokePaint)
 
-            val text = "${obj.label.uppercase()} | ${String.format("%.1f", obj.distanceMeters)}m"
+            val text = "${obj.label.uppercase()}  ${String.format("%.1f", obj.distanceMeters)}m"
             val textWidth = textPaint.measureText(text)
             val textHeight = textPaint.textSize
 
-            val textRect = RectF(
+            val badgeRect = RectF(
                 scaledRect.left,
-                (scaledRect.top - textHeight - 16f).coerceAtLeast(0f),
-                scaledRect.left + textWidth + 24f,
-                (scaledRect.top).coerceAtLeast(textHeight + 16f)
+                (scaledRect.top - textHeight - 24f).coerceAtLeast(8f),
+                scaledRect.left + textWidth + 32f,
+                (scaledRect.top).coerceAtLeast(textHeight + 32f)
             )
 
-            canvas.drawRect(textRect, textBackgroundPaint)
-            canvas.drawText(text, textRect.left + 12f, textRect.bottom - 12f, textPaint)
+            // Draw rounded badge background with accent border
+            badgeBorderPaint.color = badgeColor
+            canvas.drawRoundRect(badgeRect, 12f, 12f, badgeBackgroundPaint)
+            canvas.drawRoundRect(badgeRect, 12f, 12f, badgeBorderPaint)
+
+            // Draw text label
+            canvas.drawText(text, badgeRect.left + 16f, badgeRect.bottom - 12f, textPaint)
         }
     }
 }

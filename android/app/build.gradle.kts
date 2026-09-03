@@ -43,6 +43,7 @@ android {
     }
     aaptOptions {
         noCompress("tflite")
+        noCompress("onnx")
     }
 }
 
@@ -65,6 +66,10 @@ dependencies {
     implementation("org.tensorflow:tensorflow-lite-gpu-api:2.14.0")
     implementation("org.tensorflow:tensorflow-lite-support:0.4.4")
 
+    // ONNX Runtime Android
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.19.2")
+
+
     // Room Database
     val roomVersion = "2.6.1"
     implementation("androidx.room:room-runtime:$roomVersion")
@@ -73,6 +78,8 @@ dependencies {
 
     // Location & Play Services
     implementation("com.google.android.gms:play-services-location:21.0.1")
+    implementation("com.google.android.gms:play-services-maps:18.2.0")
+
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
