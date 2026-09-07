@@ -14,6 +14,7 @@ sealed class VoiceIntent {
     data object ToggleMap : VoiceIntent()
     data object NextDirection : VoiceIntent()
     data object StopNavigation : VoiceIntent()
+    data class NavigateTo(val destination: String) : VoiceIntent()
     data object StatusInquiry : VoiceIntent()
     data object Help : VoiceIntent()
     data class Unknown(val rawText: String) : VoiceIntent()
@@ -79,6 +80,23 @@ object VoiceCommandParser {
             // In-app Map display toggle
             command.contains("show map") || command.contains("hide map") || command.contains("toggle map") || command.contains("split screen") || command.contains("switch view") -> {
                 VoiceIntent.ToggleMap
+            }
+
+            // Destination navigation commands
+            command.startsWith("navigate to") || command.startsWith("take me to") || command.startsWith("directions to") || (command.startsWith("go to") && !command.contains("google")) -> {
+                val prefix = when {
+                    command.startsWith("navigate to") -> "navigate to"
+                    command.startsWith("take me to") -> "take me to"
+                    command.startsWith("directions to") -> "directions to"
+                    command.startsWith("go to") -> "go to"
+                    else -> ""
+                }
+                val dest = command.removePrefix(prefix).trim()
+                if (dest.isNotBlank()) {
+                    VoiceIntent.NavigateTo(dest)
+                } else {
+                    VoiceIntent.Unknown(rawText)
+                }
             }
 
             // Navigation directions & maneuvers

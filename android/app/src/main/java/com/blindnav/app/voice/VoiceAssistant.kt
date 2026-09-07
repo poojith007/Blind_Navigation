@@ -31,7 +31,10 @@ class VoiceAssistant(
     private val onEmergencyContactUpdated: (newNumber: String) -> Unit,
     private val onToggleMapView: (() -> Unit)? = null,
     private val onRepeatNavigationDirection: (() -> Unit)? = null,
-    private val onCancelNavigation: (() -> Unit)? = null
+    private val onCancelNavigation: (() -> Unit)? = null,
+    private val onNavigateToDestination: ((destination: String) -> Unit)? = null,
+    private val onListeningStarted: (() -> Unit)? = null,
+    private val onListeningStopped: (() -> Unit)? = null
 ) {
 
     private var speechRecognizer: SpeechRecognizer? = null
@@ -55,12 +58,14 @@ class VoiceAssistant(
         }
 
         try {
+            onListeningStarted?.invoke()
             speechRecognizer?.startListening(intent)
             isListening = true
             feedbackEngine.speakNormal("Listening...")
         } catch (e: Exception) {
             e.printStackTrace()
             isListening = false
+            onListeningStopped?.invoke()
         }
     }
 
@@ -69,11 +74,18 @@ class VoiceAssistant(
         override fun onBeginningOfSpeech() {}
         override fun onRmsChanged(rmsdB: Float) {}
         override fun onBufferReceived(buffer: ByteArray?) {}
-        override fun onEndOfSpeech() { isListening = false }
-        override fun onError(error: Int) { isListening = false }
+        override fun onEndOfSpeech() {
+            isListening = false
+            onListeningStopped?.invoke()
+        }
+        override fun onError(error: Int) {
+            isListening = false
+            onListeningStopped?.invoke()
+        }
 
         override fun onResults(results: Bundle?) {
             isListening = false
+            onListeningStopped?.invoke()
             val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
             if (!matches.isNullOrEmpty()) {
                 val command = matches[0]
@@ -141,12 +153,16 @@ class VoiceAssistant(
                 onCancelNavigation?.invoke()
                 feedbackEngine.speakNormal("Walking navigation stopped.")
             }
+            is VoiceIntent.NavigateTo -> {
+                feedbackEngine.speakNormal("Searching for ${intent.destination}...")
+                onNavigateToDestination?.invoke(intent.destination)
+            }
             is VoiceIntent.StatusInquiry -> {
                 feedbackEngine.speakNormal("System active. Camera scanning and AI detection running normally.")
             }
             is VoiceIntent.Help -> {
                 feedbackEngine.speakNormal(
-                    "You can say: Where am I, Next turn, Show map, Stop navigation, Repeat, History, Pause, Resume, Faster, Slower, Light on, Light off, or Emergency."
+                    "You can say: Navigate to Central Park, Where am I, Next turn, Show map, Stop navigation, Repeat, History, Pause, Resume, Faster, Slower, Light on, or Emergency."
                 )
             }
             is VoiceIntent.Unknown -> {

@@ -44,15 +44,20 @@ class FeedbackEngine(private val context: Context) : IFeedbackEngine, TextToSpee
 
                     override fun onDone(utteranceId: String?) {
                         isSpeakingActive = false
+                        currentPriority = null
                     }
 
                     override fun onError(utteranceId: String?) {
                         isSpeakingActive = false
+                        currentPriority = null
                     }
                 })
             }
         }
     }
+
+    override var currentPriority: SpeechPriority? = null
+        private set
 
     override fun setSpeechRate(rate: Float) {
         currentSpeechRate = rate.coerceIn(0.5f, 2.5f)
@@ -61,32 +66,79 @@ class FeedbackEngine(private val context: Context) : IFeedbackEngine, TextToSpee
         }
     }
 
-    override fun speakUrgent(text: String) {
+    override fun speakWithPriority(text: String, priority: SpeechPriority) {
         val now = System.currentTimeMillis()
-        // Prevent stuttering: do not cut off active utterance if it's the same warning or started very recently
-        if (isSpeakingActive && text == lastSpokenMessage && (now - lastSpokenTimestamp) < 1800L) {
-            return
-        }
-        if (isSpeakingActive && (now - lastSpokenTimestamp) < 1200L) {
+
+        // 1. Priority 1: EMERGENCY (Immediate Collision / Stop)
+        if (priority == SpeechPriority.EMERGENCY) {
+            // Deduplicate identical emergency only if uttered within 1.2s
+            if (isSpeakingActive && text == lastSpokenMessage && (now - lastSpokenTimestamp) < 1200L) {
+                return
+            }
+            lastSpokenMessage = text
+            lastSpokenTimestamp = now
+            currentPriority = SpeechPriority.EMERGENCY
+            if (!isTtsReady) return
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "EMERGENCY_${now}")
             return
         }
 
-        lastSpokenMessage = text
-        lastSpokenTimestamp = now
-        if (!isTtsReady) return
-        tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "URGENT_${now}")
+        // 2. Priority 2: SAFETY WARNING (Obstacle / Evasive action)
+        if (priority == SpeechPriority.SAFETY_WARNING) {
+            // Cannot interrupt an active Emergency announcement
+            if (isSpeakingActive && currentPriority == SpeechPriority.EMERGENCY && (now - lastSpokenTimestamp) < 2000L) {
+                return
+            }
+            // Cooldown against duplicate warnings
+            if (text == lastSpokenMessage && (now - lastSpokenTimestamp) < 3500L) {
+                return
+            }
+            lastSpokenMessage = text
+            lastSpokenTimestamp = now
+            currentPriority = SpeechPriority.SAFETY_WARNING
+            if (!isTtsReady) return
+            // Interrupt lower priority (Navigation / Info)
+            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "SAFETY_${now}")
+            return
+        }
+
+        // 3. Priority 3: NAVIGATION (Turn-by-turn maneuvers)
+        if (priority == SpeechPriority.NAVIGATION) {
+            // Do not interrupt active Emergency or Safety warnings
+            if (isSpeakingActive && (currentPriority == SpeechPriority.EMERGENCY || currentPriority == SpeechPriority.SAFETY_WARNING) && (now - lastSpokenTimestamp) < 2500L) {
+                return
+            }
+            if (text == lastSpokenMessage && (now - lastSpokenTimestamp) < 3000L) {
+                return
+            }
+            lastSpokenMessage = text
+            lastSpokenTimestamp = now
+            currentPriority = SpeechPriority.NAVIGATION
+            if (!isTtsReady) return
+            tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "NAV_${now}")
+            return
+        }
+
+        // 4. Priority 4: INFORMATION ("Path clear", spoken sparingly)
+        if (priority == SpeechPriority.INFORMATION) {
+            // Only speak if completely idle and sufficient silence has passed
+            if (isSpeakingActive || (now - lastSpokenTimestamp) < 4500L) {
+                return
+            }
+            lastSpokenMessage = text
+            lastSpokenTimestamp = now
+            currentPriority = SpeechPriority.INFORMATION
+            if (!isTtsReady) return
+            tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "INFO_${now}")
+        }
+    }
+
+    override fun speakUrgent(text: String) {
+        speakWithPriority(text, SpeechPriority.EMERGENCY)
     }
 
     override fun speakNormal(text: String) {
-        val now = System.currentTimeMillis()
-        if (isSpeakingActive && text == lastSpokenMessage && (now - lastSpokenTimestamp) < 2500L) {
-            return
-        }
-
-        lastSpokenMessage = text
-        lastSpokenTimestamp = now
-        if (!isTtsReady) return
-        tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "NORMAL_${now}")
+        speakWithPriority(text, SpeechPriority.SAFETY_WARNING)
     }
 
     override fun repeatLastMessage() {

@@ -14,12 +14,22 @@ class ThreatPrioritizerTest {
     private class FakeFeedbackEngine : IFeedbackEngine {
         override var currentSpeechRate: Float = 1.1f
         override var lastSpokenMessage: String = ""
+        override var currentPriority: SpeechPriority? = null
         val urgentSpoken = mutableListOf<String>()
         val normalSpoken = mutableListOf<String>()
         var dangerVibrations = 0
         var cautionVibrations = 0
 
         override fun setSpeechRate(rate: Float) { currentSpeechRate = rate }
+        override fun speakWithPriority(text: String, priority: SpeechPriority) {
+            currentPriority = priority
+            lastSpokenMessage = text
+            when (priority) {
+                SpeechPriority.EMERGENCY -> speakUrgent(text)
+                SpeechPriority.SAFETY_WARNING -> speakNormal(text)
+                else -> normalSpoken.add(text)
+            }
+        }
         override fun speakUrgent(text: String) { urgentSpoken.add(text); lastSpokenMessage = text }
         override fun speakNormal(text: String) { normalSpoken.add(text); lastSpokenMessage = text }
         override fun repeatLastMessage() {}
@@ -62,7 +72,7 @@ class ThreatPrioritizerTest {
         prioritizer.processFrameDetections(listOf(safePerson, dangerCar))
 
         assertEquals(1, fakeFeedback.urgentSpoken.size)
-        assertTrue(fakeFeedback.urgentSpoken[0].contains("Car"))
+        assertTrue(fakeFeedback.urgentSpoken[0].contains("Vehicle") || fakeFeedback.urgentSpoken[0].contains("Stop") || fakeFeedback.urgentSpoken[0].contains("STOP"))
         assertEquals(1, fakeFeedback.dangerVibrations)
         assertEquals(0, fakeFeedback.normalSpoken.size)
     }

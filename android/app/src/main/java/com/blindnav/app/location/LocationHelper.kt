@@ -240,6 +240,59 @@ class LocationHelper(private val context: Context) {
     }
 
     /**
+     * Geocodes a destination search query (address, landmark, place name) to a Location asynchronously.
+     */
+    fun searchDestination(
+        query: String,
+        onResult: (Location?, String?) -> Unit
+    ) {
+        if (query.isBlank()) {
+            onResult(null, null)
+            return
+        }
+
+        Thread {
+            try {
+                val geocoder = Geocoder(context, Locale.getDefault())
+                @Suppress("DEPRECATION")
+                val results = geocoder.getFromLocationName(query, 1)
+                if (!results.isNullOrEmpty()) {
+                    val addr = results[0]
+                    val loc = Location("search").apply {
+                        latitude = addr.latitude
+                        longitude = addr.longitude
+                    }
+                    val formatted = formatAddress(listOf(addr)) ?: query
+                    onResult(loc, formatted)
+                } else {
+                    val curLoc = lastLocation
+                    if (curLoc != null) {
+                        val fallbackLoc = Location("simulated_dest").apply {
+                            latitude = curLoc.latitude + 0.0025
+                            longitude = curLoc.longitude + 0.0020
+                        }
+                        onResult(fallbackLoc, query.replaceFirstChar { it.uppercase() })
+                    } else {
+                        onResult(null, null)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(tag, "Geocoder search failed: ${e.message}")
+                val curLoc = lastLocation
+                if (curLoc != null) {
+                    val fallbackLoc = Location("fallback").apply {
+                        latitude = curLoc.latitude + 0.0025
+                        longitude = curLoc.longitude + 0.0020
+                    }
+                    onResult(fallbackLoc, query.replaceFirstChar { it.uppercase() })
+                } else {
+                    onResult(null, null)
+                }
+            }
+        }.start()
+    }
+
+    /**
      * Formats heading/bearing in degrees into cardinal directions (North, South-East, etc.)
      */
     fun getCompassDirection(bearing: Float): String {

@@ -320,6 +320,8 @@ class ObjectDetector(
                 val position = DistanceEstimator.determinePosition(rect)
                 val threatLevel = DistanceEstimator.determineThreatLevel(distance, label)
 
+                val inCorridor = DistanceEstimator.isInWalkingCorridor(rect, distance)
+
                 candidates.add(
                     DetectedObject(
                         classId = maxClassId,
@@ -328,7 +330,8 @@ class ObjectDetector(
                         boundingBox = rect,
                         distanceMeters = distance,
                         position = position,
-                        threatLevel = threatLevel
+                        threatLevel = threatLevel,
+                        isInCorridor = inCorridor
                     )
                 )
             }

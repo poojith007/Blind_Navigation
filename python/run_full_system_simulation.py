@@ -73,11 +73,41 @@ def get_spatial_audio_cue(position: str, threat_level: str):
     tone = {"DANGER": "1200 Hz (Double Beep)", "CAUTION": "800 Hz (Single Beep)", "SAFE": "480 Hz (Subtle Click)"}[threat_level]
     return f"[Spatial Audio] Panning: {panning} | Frequency: {tone}"
 
+def is_in_walking_corridor(xmin: float, xmax: float, distance_meters: float) -> bool:
+    half_width = 0.28 if distance_meters <= 1.5 else (0.20 if distance_meters <= 3.0 else 0.14)
+    corridor_left = max(0.0, 0.50 - half_width)
+    corridor_right = min(1.0, 0.50 + half_width)
+    return xmax > corridor_left and xmin < corridor_right
+
+def generate_action_guidance(label: str, position: str, distance_meters: float, threat_level: str, evasive_dir: str = "RIGHT") -> str:
+    is_vehicle = label.lower() in ["car", "bus", "truck", "motorcycle"]
+    if threat_level == "DANGER" or distance_meters <= 1.2:
+        if is_vehicle:
+            if position == "RIGHT": return "Vehicle approaching from your right. Stop."
+            elif position == "LEFT": return "Vehicle approaching from your left. Stop."
+            return "STOP. Vehicle ahead."
+        return "STOP. Obstacle ahead."
+    
+    if position == "CENTER":
+        return f"Obstacle ahead. Move slightly {evasive_dir.lower()}."
+    elif position == "LEFT":
+        return "Obstacle on your left. Keep right."
+    elif position == "RIGHT":
+        return "Obstacle on your right. Keep left."
+    return "Path clear. Continue straight."
+
 # --- 4. Voice Intent Recognition Parser ---
 def parse_voice_command(raw_text: str) -> dict:
     cmd = raw_text.lower().strip()
     if any(w in cmd for w in ["cancel", "abort", "i am ok", "false alarm"]):
         return {"intent": "CANCEL_EMERGENCY"}
+    elif any(cmd.startswith(prefix) for prefix in ["navigate to", "directions to", "take me to", "go to"]):
+        for prefix in ["navigate to", "directions to", "take me to", "go to"]:
+            if cmd.startswith(prefix):
+                dest = cmd[len(prefix):].strip()
+                return {"intent": "NAVIGATE_TO", "destination": dest}
+    elif any(w in cmd for w in ["stop nav", "stop navigation", "cancel route"]):
+        return {"intent": "STOP_NAVIGATION"}
     elif "set contact" in cmd or "emergency contact" in cmd or "set phone" in cmd:
         digits = "".join([c for c in cmd if c.isdigit()])
         return {"intent": "SET_CONTACT", "phone": digits}
@@ -152,6 +182,8 @@ def run_simulation():
         dist = estimate_distance(det["label"], h_frac)
         pos = determine_position(xmin, xmax)
         threat = determine_threat_level(dist, det["label"])
+        in_corridor = is_in_walking_corridor(xmin, xmax, dist)
+        action_guidance = generate_action_guidance(det["label"], pos, dist, threat)
         tts = format_tts_prompt(det["label"], pos, dist, threat)
         cue = get_spatial_audio_cue(pos, threat)
         
@@ -161,6 +193,8 @@ def run_simulation():
             "distance": dist,
             "position": pos,
             "threat": threat,
+            "in_corridor": in_corridor,
+            "action": action_guidance,
             "tts": tts,
             "cue": cue
         })
@@ -168,18 +202,28 @@ def run_simulation():
         print(f"\nObject #{idx}: [{det['label'].upper()}]")
         print(f"  * Distance      : {dist} m (Box Height: {h_frac:.2f})")
         print(f"  * Spatial Zone  : {pos}")
+        print(f"  * In Corridor   : {'YES (Active Path Threat)' if in_corridor else 'NO (Filtered Out - Outside Corridor)'}")
         print(f"  * Threat Level  : [{threat}]")
+        print(f"  * Action Prompt : \"{action_guidance}\"")
         print(f"  * {cue}")
-        print(f"  * Spoken Alert  : \"{tts}\"")
 
-    # Threat Sorting (DANGER first, proximity ascending)
-    sorted_threats = sorted(processed_objects, key=lambda x: (0 if x["threat"] == "DANGER" else (1 if x["threat"] == "CAUTION" else 2), x["distance"]))
+    # Corridor and Danger Filtering (Objects outside walking corridor are silent)
+    corridor_threats = [o for o in processed_objects if o["in_corridor"] or o["threat"] == "DANGER"]
+    sorted_threats = sorted(corridor_threats, key=lambda x: (0 if x["threat"] == "DANGER" else (1 if x["threat"] == "CAUTION" else 2), x["distance"]))
     
-    print("\n--- 2. Threat Prioritization Hierarchy (Immediate Dispatch) ---")
+    print("\n--- 2. Multi-Sensor Decision Engine & Path Guidance Dispatch ---")
     top = sorted_threats[0]
-    print(f"  >> Top Priority Action Target: [{top['label'].upper()}] at {top['distance']}m ({top['position']}) -> Threat: {top['threat']}")
-    print(f"  >> Audio Output Queue: \"{top['tts']}\"")
-    print(f"  >> Haptic Pattern: {'Double-Pulse High Waveform' if top['threat'] == 'DANGER' else 'Single Caution Pulse'}")
+    print(f"  >> Primary Active Threat : [{top['label'].upper()}] at {top['distance']}m ({top['position']}) -> Threat: {top['threat']}")
+    print(f"  >> Action Guidance Spoken: \"{top['action']}\" (Priority: {'EMERGENCY' if top['threat'] == 'DANGER' else 'SAFETY_WARNING'})")
+    print(f"  >> Diagnostic Box (Demo) : \"{top['tts']}\"")
+    print(f"  >> Haptic Feedback Pattern: {'Double-Pulse High Waveform' if top['threat'] == 'DANGER' else 'Single Caution Pulse'}")
+
+    # Environmental Audio & Sensor Fusion Simulation
+    print("\n--- 2b. Environmental Acoustic Perception & Sensor Fusion ---")
+    print("  [ACOUSTIC SENSOR] Detected Audio Event: VEHICLE_HORN (Peak Freq: 2850 Hz, RMS: 0.14)")
+    print("  [FUSION ENGINE] Correlating Horn with detected left vehicle at 2.3m...")
+    print("  [ESCALATION] Threat escalated from CAUTION -> DANGER (Priority: EMERGENCY, preemption queue: FLUSH)")
+    print("  [DISPATCHED] Spoken Prompt: \"Vehicle approaching from your left. Stop.\"")
 
     print("\n--- 3. Voice Assistant Intent Processing Test Suite ---")
     test_voice_phrases = [

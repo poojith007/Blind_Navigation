@@ -77,6 +77,21 @@ class VoiceCommandParserTest {
     }
 
     @Test
+    fun testNavigateToCommands() {
+        val nav1 = VoiceCommandParser.parse("navigate to central park")
+        assertTrue(nav1 is VoiceIntent.NavigateTo)
+        assertEquals("central park", (nav1 as VoiceIntent.NavigateTo).destination)
+
+        val nav2 = VoiceCommandParser.parse("take me to city hall")
+        assertTrue(nav2 is VoiceIntent.NavigateTo)
+        assertEquals("city hall", (nav2 as VoiceIntent.NavigateTo).destination)
+
+        val nav3 = VoiceCommandParser.parse("directions to pharmacy")
+        assertTrue(nav3 is VoiceIntent.NavigateTo)
+        assertEquals("pharmacy", (nav3 as VoiceIntent.NavigateTo).destination)
+    }
+
+    @Test
     fun testUnknownCommand() {
         val unknown = VoiceCommandParser.parse("play music on spotify")
         assertTrue(unknown is VoiceIntent.Unknown)

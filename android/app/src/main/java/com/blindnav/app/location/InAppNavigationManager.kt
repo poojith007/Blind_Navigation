@@ -21,13 +21,23 @@ enum class ManeuverType {
     ARRIVE
 }
 
+data class RoutePreview(
+    val destinationName: String,
+    val destinationLocation: Location,
+    val routeSteps: List<NavStep>,
+    val totalDistanceMeters: Float,
+    val estimatedMinutes: Int
+)
+
 data class NavProgress(
     val nextStep: NavStep?,
     val distanceToNextStepMeters: Float,
     val totalRemainingDistanceMeters: Float,
     val relativeBearingDegrees: Float,
     val directionSymbol: String,
-    val isArrived: Boolean
+    val isArrived: Boolean,
+    val upcomingStep: NavStep? = null,
+    val estimatedRemainingMinutes: Int = 0
 )
 
 class InAppNavigationManager {
@@ -49,6 +59,26 @@ class InAppNavigationManager {
     private var lastAnnouncementDistance: Float = Float.MAX_VALUE
 
     /**
+     * Previews route, total distance, and estimated walking time before navigation starts.
+     */
+    fun previewRoute(
+        start: Location,
+        target: Location,
+        targetName: String = "Destination"
+    ): RoutePreview {
+        val steps = generateWalkingSteps(start, target, targetName)
+        val totalDist = start.distanceTo(target)
+        val minutes = getEstimatedWalkingMinutes(totalDist)
+        return RoutePreview(
+            destinationName = targetName,
+            destinationLocation = target,
+            routeSteps = steps,
+            totalDistanceMeters = totalDist,
+            estimatedMinutes = minutes
+        )
+    }
+
+    /**
      * Sets a new walking destination and generates route steps.
      */
     fun startNavigation(
@@ -68,6 +98,42 @@ class InAppNavigationManager {
     }
 
     /**
+     * Starts navigation from an already generated RoutePreview.
+     */
+    fun startNavigation(
+        currentLocation: Location,
+        preview: RoutePreview
+    ): NavProgress {
+        destinationLocation = preview.destinationLocation
+        destinationName = preview.destinationName
+        isNavigating = true
+        currentStepIndex = 0
+        lastSpokenStepIndex = -1
+        lastAnnouncementDistance = Float.MAX_VALUE
+
+        currentRoute = preview.routeSteps
+        return updateProgress(currentLocation)
+    }
+
+    fun getNextUpcomingStep(): NavStep? {
+        val nextIdx = currentStepIndex + 1
+        return if (nextIdx in currentRoute.indices) currentRoute[nextIdx] else null
+    }
+
+    fun getEstimatedWalkingMinutes(distanceMeters: Float): Int {
+        if (distanceMeters <= 0f) return 0
+        return Math.ceil((distanceMeters / 80.0).toDouble()).toInt().coerceAtLeast(1)
+    }
+
+    fun formatDistance(distanceMeters: Float): String {
+        return if (distanceMeters >= 1000f) {
+            String.format(Locale.US, "%.1f km", distanceMeters / 1000f)
+        } else {
+            "${distanceMeters.toInt()} m"
+        }
+    }
+
+    /**
      * Updates the user's progress along the route given their current GPS position.
      */
     fun updateProgress(currentLocation: Location): NavProgress {
@@ -78,7 +144,9 @@ class InAppNavigationManager {
                 totalRemainingDistanceMeters = 0f,
                 relativeBearingDegrees = 0f,
                 directionSymbol = "🎯",
-                isArrived = true
+                isArrived = true,
+                upcomingStep = null,
+                estimatedRemainingMinutes = 0
             )
         }
 
@@ -105,7 +173,9 @@ class InAppNavigationManager {
                 totalRemainingDistanceMeters = 0f,
                 relativeBearingDegrees = 0f,
                 directionSymbol = "🎯",
-                isArrived = true
+                isArrived = true,
+                upcomingStep = null,
+                estimatedRemainingMinutes = 0
             )
         }
 
@@ -117,6 +187,8 @@ class InAppNavigationManager {
         while (diff < -180f) diff += 360f
 
         val symbol = getManeuverSymbol(diff, step.maneuver)
+        val upcoming = getNextUpcomingStep()
+        val estMinutes = getEstimatedWalkingMinutes(distanceToDestination)
 
         return NavProgress(
             nextStep = step,
@@ -124,7 +196,9 @@ class InAppNavigationManager {
             totalRemainingDistanceMeters = distanceToDestination,
             relativeBearingDegrees = diff,
             directionSymbol = symbol,
-            isArrived = false
+            isArrived = false,
+            upcomingStep = upcoming,
+            estimatedRemainingMinutes = estMinutes
         )
     }
 
