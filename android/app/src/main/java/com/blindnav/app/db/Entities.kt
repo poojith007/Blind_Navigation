@@ -19,6 +19,9 @@ data class UserPreferences(
     val speechRate: Float = 1.1f,
     val vibrationIntensity: Int = 2,
     val emergencyContactPhone: String = "",
+    val guardianName: String = "",
+    val backupGuardianName: String = "",
+    val backupGuardianPhone: String = "",
     val language: String = "en-US",
     val highContrastTheme: Boolean = true
 )

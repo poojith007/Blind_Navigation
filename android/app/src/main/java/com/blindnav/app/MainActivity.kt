@@ -59,6 +59,10 @@ import com.blindnav.app.engine.AudioEventType
 import com.blindnav.app.engine.AudioEvidence
 import com.blindnav.app.engine.GuidanceDecision
 import com.blindnav.app.engine.SpeechPriority
+import com.blindnav.app.emergency.EmergencyContactRepository
+import com.blindnav.app.emergency.EmergencyContactSetupDialog
+import com.blindnav.app.emergency.EmergencySosDialog
+import com.blindnav.app.emergency.EmergencySosHandler
 
 class MainActivity : AppCompatActivity() {
 
@@ -150,7 +154,9 @@ class MainActivity : AppCompatActivity() {
     private var selectedPinLatLng: LatLng? = null
     private var currentViewMode = ViewMode.SPLIT
     private var isDetectionPaused = false
-    private var emergencyContactPhone = "911"
+    private lateinit var emergencyRepository: EmergencyContactRepository
+    private lateinit var emergencySosHandler: EmergencySosHandler
+    private var emergencyContactPhone = ""
     private var lastDbLogTime = 0L
 
     private val requiredPermissions = arrayOf(
@@ -159,7 +165,8 @@ class MainActivity : AppCompatActivity() {
         Manifest.permission.RECORD_AUDIO,
         Manifest.permission.ACCESS_FINE_LOCATION,
         Manifest.permission.ACCESS_COARSE_LOCATION,
-        Manifest.permission.SEND_SMS
+        Manifest.permission.SEND_SMS,
+        Manifest.permission.CALL_PHONE
     )
     private val permissionRequestCode = 101
 
@@ -172,6 +179,9 @@ class MainActivity : AppCompatActivity() {
         threatPrioritizer = ThreatPrioritizer(feedbackEngine, spatialSoundEngine)
         objectDetector = ObjectDetector(this)
         database = AppDatabase.getDatabase(this)
+        emergencyRepository = EmergencyContactRepository(this, database, lifecycleScope)
+        emergencySosHandler = EmergencySosHandler(this, feedbackEngine, locationHelper)
+        emergencyContactPhone = emergencyRepository.getPrimaryGuardian()?.phoneNumber.orEmpty()
 
         setupAccessibleUiLayout(savedInstanceState)
 
@@ -180,7 +190,19 @@ class MainActivity : AppCompatActivity() {
             feedbackEngine = feedbackEngine,
             scope = lifecycleScope,
             onFallConfirmed = {
-                voiceAssistant.sendEmergencySos("Automated Fall Detection Alert! User may be injured.")
+                if (emergencyRepository.hasGuardian()) {
+                    emergencyRepository.getPrimaryGuardian()?.let { guardian ->
+                        emergencySosHandler.sendLocationAlert(
+                            contact = guardian,
+                            backupContact = emergencyRepository.getBackupGuardian()
+                        )
+                    }
+                } else {
+                    feedbackEngine.speakUrgent("Fall detected! No emergency guardian configured. Please set up a Guardian.")
+                    runOnUiThread {
+                        showEmergencySetupDialog()
+                    }
+                }
             }
         )
 
@@ -240,6 +262,16 @@ class MainActivity : AppCompatActivity() {
                 if (::environmentalAudioEngine.isInitialized) {
                     environmentalAudioEngine.resumeListening()
                 }
+            },
+            onTriggerEmergencySos = {
+                runOnUiThread {
+                    showEmergencySosDialog()
+                }
+            },
+            onOpenEmergencySetup = {
+                runOnUiThread {
+                    showEmergencySetupDialog()
+                }
             }
         )
 
@@ -259,7 +291,7 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             val prefs = database.detectionDao().getPreferences()
             if (prefs != null) {
-                if (prefs.emergencyContactPhone.isNotBlank()) {
+                if (prefs.emergencyContactPhone.isNotBlank() && emergencyContactPhone.isBlank()) {
                     emergencyContactPhone = prefs.emergencyContactPhone
                 }
                 withContext(Dispatchers.Main) {
@@ -271,7 +303,7 @@ class MainActivity : AppCompatActivity() {
                         userId = 1,
                         speechRate = 1.15f,
                         vibrationIntensity = 2,
-                        emergencyContactPhone = "911"
+                        emergencyContactPhone = emergencyContactPhone
                     )
                 )
             }
@@ -863,6 +895,27 @@ class MainActivity : AppCompatActivity() {
             }
         }
         controlRow.addView(demoModeButton)
+
+        val guardianButton = Button(this).apply {
+            text = "🛡️ GUARDIAN"
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            background = ContextCompat.getDrawable(this@MainActivity, R.drawable.bg_secondary_button)
+            elevation = 8f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            contentDescription = "Emergency Contact Settings. Configure primary Guardian and backup contact."
+            layoutParams = LinearLayout.LayoutParams(
+                0,
+                120,
+                1.0f
+            ).apply {
+                setMargins(6, 0, 0, 0)
+            }
+            setOnClickListener {
+                showEmergencySetupDialog()
+            }
+        }
+        controlRow.addView(guardianButton)
         topOverlayContainer.addView(controlRow)
 
         // 3i. Multi-Sensor Examiner Diagnostics Card (Visible only in Demo Mode)
@@ -932,7 +985,7 @@ class MainActivity : AppCompatActivity() {
             background = ContextCompat.getDrawable(this@MainActivity, R.drawable.bg_emergency_sos)
             elevation = 20f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
-            contentDescription = "Emergency SOS Button. Tap to send your GPS location and distress message to emergency contacts."
+            contentDescription = "Emergency SOS Button. Tap to call guardian or send distress location."
             val params = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 160
@@ -942,7 +995,7 @@ class MainActivity : AppCompatActivity() {
             }
             layoutParams = params
             setOnClickListener {
-                voiceAssistant.sendEmergencySos("Manual SOS Button Pressed!")
+                showEmergencySosDialog()
             }
         }
         rootLayout.addView(emergencyButton)
@@ -1231,6 +1284,36 @@ class MainActivity : AppCompatActivity() {
         currentPreview = null
         updateUiForState(NavState.IDLE)
         feedbackEngine.speakNormal("Destination selection canceled.")
+    }
+
+    private fun showEmergencySosDialog() {
+        if (emergencyRepository.hasGuardian()) {
+            val dialog = EmergencySosDialog(
+                context = this,
+                repository = emergencyRepository,
+                emergencySosHandler = emergencySosHandler,
+                feedbackEngine = feedbackEngine,
+                onOpenSettings = {
+                    showEmergencySetupDialog()
+                }
+            )
+            dialog.show()
+        } else {
+            feedbackEngine.speakUrgent("No emergency contact configured! Please configure your Guardian contact.")
+            showEmergencySetupDialog()
+        }
+    }
+
+    private fun showEmergencySetupDialog() {
+        val setupDialog = EmergencyContactSetupDialog(
+            context = this,
+            repository = emergencyRepository,
+            feedbackEngine = feedbackEngine,
+            onSaved = { config ->
+                emergencyContactPhone = config.primaryGuardian?.phoneNumber.orEmpty()
+            }
+        )
+        setupDialog.show()
     }
 
     private fun cycleViewMode() {

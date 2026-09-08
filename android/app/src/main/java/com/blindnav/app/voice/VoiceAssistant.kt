@@ -34,7 +34,9 @@ class VoiceAssistant(
     private val onCancelNavigation: (() -> Unit)? = null,
     private val onNavigateToDestination: ((destination: String) -> Unit)? = null,
     private val onListeningStarted: (() -> Unit)? = null,
-    private val onListeningStopped: (() -> Unit)? = null
+    private val onListeningStopped: (() -> Unit)? = null,
+    private val onTriggerEmergencySos: (() -> Unit)? = null,
+    private val onOpenEmergencySetup: (() -> Unit)? = null
 ) {
 
     private var speechRecognizer: SpeechRecognizer? = null
@@ -103,7 +105,11 @@ class VoiceAssistant(
                 onCancelEmergency()
             }
             is VoiceIntent.EmergencySos -> {
-                sendEmergencySos("Voice SOS trigger activated.")
+                if (onTriggerEmergencySos != null) {
+                    onTriggerEmergencySos.invoke()
+                } else {
+                    sendEmergencySos("Voice SOS trigger activated.")
+                }
             }
             is VoiceIntent.LocationInquiry -> {
                 handleLocationInquiry()
@@ -129,9 +135,14 @@ class VoiceAssistant(
                 feedbackEngine.speakNormal(msg)
             }
             is VoiceIntent.SetEmergencyContact -> {
-                onEmergencyContactUpdated(intent.phoneNumber)
-                persistPreferences()
-                feedbackEngine.speakNormal("Emergency contact updated to ${intent.phoneNumber}.")
+                val validation = com.blindnav.app.emergency.GuardianContactValidator.validate("Guardian", intent.phoneNumber)
+                if (validation is com.blindnav.app.emergency.ValidationResult.Success) {
+                    onEmergencyContactUpdated(intent.phoneNumber)
+                    persistPreferences()
+                    feedbackEngine.speakNormal("Emergency contact updated to ${intent.phoneNumber}.")
+                } else if (validation is com.blindnav.app.emergency.ValidationResult.Error) {
+                    feedbackEngine.speakUrgent("Cannot set contact: ${validation.reason}")
+                }
             }
             is VoiceIntent.ToggleTorch -> {
                 onToggleTorch(intent.enable)
@@ -216,28 +227,28 @@ class VoiceAssistant(
     fun sendEmergencySos(customMessage: String) {
         val recipient = emergencyContactNumberProvider()
         if (recipient.isNullOrBlank()) {
-            feedbackEngine.speakUrgent("Emergency alert failed. No emergency contact phone number configured!")
+            feedbackEngine.speakUrgent("Emergency alert failed. No emergency contact configured! Please configure your Guardian contact.")
+            onOpenEmergencySetup?.invoke()
             return
         }
 
         feedbackEngine.speakUrgent("Preparing Emergency SOS Alert...")
 
         locationHelper.getCurrentLocation { location, address, mapsUrl ->
-            val locationText = when {
-                address != null && mapsUrl != null -> "Location: $address ($mapsUrl)"
-                mapsUrl != null -> "Location Map: $mapsUrl"
-                else -> "Location unavailable (GPS offline)"
-            }
-
-            val fullMessage = "EMERGENCY ALERT: Visually Impaired User requires immediate assistance! $customMessage $locationText"
+            val distressMsg = com.blindnav.app.emergency.EmergencySosHandler.formatEmergencyMessage(location, address, mapsUrl)
+            val fullMessage = if (customMessage.isNotBlank()) "$distressMsg ($customMessage)" else distressMsg
 
             try {
                 @Suppress("DEPRECATION")
-                val smsManager = SmsManager.getDefault()
+                val smsManager = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                    context.getSystemService(SmsManager::class.java)
+                } else {
+                    SmsManager.getDefault()
+                }
                 val parts = smsManager.divideMessage(fullMessage)
                 smsManager.sendMultipartTextMessage(recipient, null, parts, null, null)
 
-                feedbackEngine.speakUrgent("Emergency SOS message and location coordinates sent to contact $recipient!")
+                feedbackEngine.speakUrgent("Emergency alert sent to Guardian at $recipient!")
                 feedbackEngine.vibrateDanger()
             } catch (e: Exception) {
                 e.printStackTrace()
