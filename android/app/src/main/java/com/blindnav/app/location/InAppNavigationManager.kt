@@ -1,6 +1,8 @@
 package com.blindnav.app.location
 
 import android.location.Location
+import org.json.JSONArray
+import org.json.JSONObject
 import java.util.Locale
 
 data class NavStep(
@@ -37,12 +39,16 @@ data class NavProgress(
     val directionSymbol: String,
     val isArrived: Boolean,
     val upcomingStep: NavStep? = null,
-    val estimatedRemainingMinutes: Int = 0
+    val estimatedRemainingMinutes: Int = 0,
+    val isPaused: Boolean = false
 )
 
 class InAppNavigationManager {
 
     var isNavigating: Boolean = false
+        private set
+
+    var isPaused: Boolean = false
         private set
 
     var currentRoute: List<NavStep> = emptyList()
@@ -89,6 +95,7 @@ class InAppNavigationManager {
         destinationLocation = targetLocation
         destinationName = targetName
         isNavigating = true
+        isPaused = false
         currentStepIndex = 0
         lastSpokenStepIndex = -1
         lastAnnouncementDistance = Float.MAX_VALUE
@@ -107,12 +114,93 @@ class InAppNavigationManager {
         destinationLocation = preview.destinationLocation
         destinationName = preview.destinationName
         isNavigating = true
+        isPaused = false
         currentStepIndex = 0
         lastSpokenStepIndex = -1
         lastAnnouncementDistance = Float.MAX_VALUE
 
         currentRoute = preview.routeSteps
         return updateProgress(currentLocation)
+    }
+
+    /**
+     * Resumes navigation from a cached offline route package.
+     */
+    fun startNavigationFromCache(
+        cachedDestination: String,
+        targetLocation: Location,
+        routeJson: String,
+        currentLocation: Location
+    ): NavProgress {
+        destinationLocation = targetLocation
+        destinationName = cachedDestination
+        isNavigating = true
+        isPaused = false
+        currentStepIndex = 0
+        lastSpokenStepIndex = -1
+        lastAnnouncementDistance = Float.MAX_VALUE
+
+        val parsed = parseRouteFromJson(routeJson)
+        currentRoute = if (parsed.isNotEmpty()) parsed else generateWalkingSteps(currentLocation, targetLocation, cachedDestination)
+        return updateProgress(currentLocation)
+    }
+
+    fun pauseNavigation() {
+        if (isNavigating) {
+            isPaused = true
+        }
+    }
+
+    fun resumeNavigation() {
+        if (isNavigating) {
+            isPaused = false
+        }
+    }
+
+    val currentSteps: List<NavStep>
+        get() = currentRoute
+
+    fun serializeRouteToJson(steps: List<NavStep> = currentRoute): String {
+        val array = JSONArray()
+        for (step in steps) {
+            val obj = JSONObject()
+            obj.put("instruction", step.instruction)
+            obj.put("maneuver", step.maneuver.name)
+            obj.put("symbol", step.symbol)
+            obj.put("lat", step.targetLocation.latitude)
+            obj.put("lng", step.targetLocation.longitude)
+            obj.put("distanceMeters", step.distanceMeters.toDouble())
+            array.put(obj)
+        }
+        return array.toString()
+    }
+
+    fun parseRouteFromJson(jsonStr: String): List<NavStep> {
+        val list = mutableListOf<NavStep>()
+        try {
+            val array = JSONArray(jsonStr)
+            for (i in 0 until array.length()) {
+                val obj = array.getJSONObject(i)
+                val loc = Location("cached").apply {
+                    latitude = obj.getDouble("lat")
+                    longitude = obj.getDouble("lng")
+                }
+                val maneuverName = obj.optString("maneuver", ManeuverType.STRAIGHT.name)
+                val maneuver = try { ManeuverType.valueOf(maneuverName) } catch (e: Exception) { ManeuverType.STRAIGHT }
+                list.add(
+                    NavStep(
+                        instruction = obj.getString("instruction"),
+                        maneuver = maneuver,
+                        symbol = obj.optString("symbol", "⬆️"),
+                        targetLocation = loc,
+                        distanceMeters = obj.optDouble("distanceMeters", 0.0).toFloat()
+                    )
+                )
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+        return list
     }
 
     fun getNextUpcomingStep(): NavStep? {
@@ -146,15 +234,16 @@ class InAppNavigationManager {
                 directionSymbol = "🎯",
                 isArrived = true,
                 upcomingStep = null,
-                estimatedRemainingMinutes = 0
+                estimatedRemainingMinutes = 0,
+                isPaused = isPaused
             )
         }
 
         val step = currentRoute[currentStepIndex]
         val distanceToStep = currentLocation.distanceTo(step.targetLocation)
 
-        // If user reached the current waypoint (within 12 meters)
-        if (distanceToStep < 12.0f && currentStepIndex < currentRoute.size - 1) {
+        // If not paused, advance waypoint when reached (within 12 meters)
+        if (!isPaused && distanceToStep < 12.0f && currentStepIndex < currentRoute.size - 1) {
             currentStepIndex++
             lastAnnouncementDistance = Float.MAX_VALUE
             return updateProgress(currentLocation)
@@ -175,7 +264,8 @@ class InAppNavigationManager {
                 directionSymbol = "🎯",
                 isArrived = true,
                 upcomingStep = null,
-                estimatedRemainingMinutes = 0
+                estimatedRemainingMinutes = 0,
+                isPaused = false
             )
         }
 
@@ -198,7 +288,8 @@ class InAppNavigationManager {
             directionSymbol = symbol,
             isArrived = false,
             upcomingStep = upcoming,
-            estimatedRemainingMinutes = estMinutes
+            estimatedRemainingMinutes = estMinutes,
+            isPaused = isPaused
         )
     }
 
@@ -206,7 +297,7 @@ class InAppNavigationManager {
      * Evaluates if a voice direction announcement should be spoken right now.
      */
     fun shouldAnnounceDirection(progress: NavProgress): String? {
-        if (!isNavigating || progress.nextStep == null) {
+        if (!isNavigating || isPaused || progress.nextStep == null) {
             if (progress.isArrived && lastSpokenStepIndex != 9999) {
                 lastSpokenStepIndex = 9999
                 return "You have arrived at your destination, $destinationName."
@@ -241,6 +332,7 @@ class InAppNavigationManager {
 
     fun stopNavigation() {
         isNavigating = false
+        isPaused = false
         currentRoute = emptyList()
         destinationLocation = null
         destinationName = ""
@@ -259,7 +351,6 @@ class InAppNavigationManager {
         val totalDistance = start.distanceTo(target)
         val bearing = start.bearingTo(target)
 
-        // For short distances (< 60 meters), single straight segment
         if (totalDistance < 60f) {
             return listOf(
                 NavStep(
@@ -272,10 +363,9 @@ class InAppNavigationManager {
             )
         }
 
-        // For longer walking distances, create intermediate turn points
         val midPoint = Location("nav").apply {
             latitude = (start.latitude + target.latitude) / 2.0
-            longitude = start.longitude // Right-angle walking grid
+            longitude = start.longitude
         }
 
         val step1 = NavStep(

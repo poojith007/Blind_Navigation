@@ -15,14 +15,18 @@ class PathGuidanceAlgorithmTest {
 
     private class TestFeedbackEngine : IFeedbackEngine {
         override var currentSpeechRate: Float = 1.15f
-        override var lastSpokenMessage: String = ""
         override var currentPriority: SpeechPriority? = null
+        override var lastSpokenMessage: String = ""
+        override var isVoiceGuidanceMuted: Boolean = false
+        override var isVibrationEnabled: Boolean = true
 
         val spokenMessages = mutableListOf<Pair<String, SpeechPriority>>()
         var dangerVibrations = 0
         var cautionVibrations = 0
 
         override fun setSpeechRate(rate: Float) { currentSpeechRate = rate }
+        override fun setVoiceGuidanceEnabled(enable: Boolean) { isVoiceGuidanceMuted = !enable }
+        override fun adjustVolume(increase: Boolean) {}
 
         override fun speakWithPriority(text: String, priority: SpeechPriority) {
             currentPriority = priority

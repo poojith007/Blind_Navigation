@@ -41,6 +41,11 @@ class LocationHelper(private val context: Context) {
     var lastStreetName: String? = null
         private set
 
+    var currentGpsConfidence: GpsConfidence = GpsConfidence.UNAVAILABLE
+        private set
+
+    var onGpsConfidenceChanged: ((confidence: GpsConfidence, announcement: String?) -> Unit)? = null
+
     fun hasLocationPermission(): Boolean {
         val finePerm = ContextCompat.checkSelfPermission(
             context,
@@ -80,6 +85,18 @@ class LocationHelper(private val context: Context) {
             override fun onLocationResult(result: LocationResult) {
                 val loc = result.lastLocation ?: return
                 lastLocation = loc
+
+                val newConfidence = GpsConfidence.evaluate(loc)
+                if (newConfidence != currentGpsConfidence) {
+                    val prevConfidence = currentGpsConfidence
+                    currentGpsConfidence = newConfidence
+                    val announcement = when (newConfidence) {
+                        GpsConfidence.WEAK -> "GPS signal is weak. Please slow down."
+                        GpsConfidence.UNAVAILABLE -> "Location is uncertain. Please stop."
+                        GpsConfidence.GOOD -> if (prevConfidence == GpsConfidence.UNAVAILABLE || prevConfidence == GpsConfidence.WEAK) null else null
+                    }
+                    onGpsConfidenceChanged?.invoke(newConfidence, announcement)
+                }
 
                 Thread {
                     val address = reverseGeocode(loc.latitude, loc.longitude)
