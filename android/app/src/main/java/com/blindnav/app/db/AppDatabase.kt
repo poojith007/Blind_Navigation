@@ -5,7 +5,16 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [DetectionLog::class, UserPreferences::class], version = 1, exportSchema = false)
+@Database(
+    entities = [
+        DetectionLog::class,
+        UserPreferences::class,
+        OfflineAreaEntity::class,
+        CachedRouteEntity::class
+    ],
+    version = 2,
+    exportSchema = false
+)
 abstract class AppDatabase : RoomDatabase() {
 
     abstract fun detectionDao(): DetectionHistoryDao

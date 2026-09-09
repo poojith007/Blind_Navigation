@@ -11,7 +11,12 @@ interface IFeedbackEngine {
     val currentSpeechRate: Float
     val lastSpokenMessage: String
     val currentPriority: SpeechPriority?
+    var isVoiceGuidanceMuted: Boolean
+    var isVibrationEnabled: Boolean
+
     fun setSpeechRate(rate: Float)
+    fun setVoiceGuidanceEnabled(enable: Boolean)
+    fun adjustVolume(increase: Boolean)
     fun speakWithPriority(text: String, priority: SpeechPriority)
     fun speakUrgent(text: String)
     fun speakNormal(text: String)

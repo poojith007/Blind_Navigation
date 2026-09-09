@@ -18,7 +18,8 @@ class EmergencySosDialog(
     private val repository: EmergencyContactRepository,
     private val emergencySosHandler: EmergencySosHandler,
     private val feedbackEngine: IFeedbackEngine,
-    private val onOpenSettings: () -> Unit
+    private val onOpenSettings: () -> Unit,
+    private val onDismiss: () -> Unit = {}
 ) {
 
     fun show() {
@@ -28,10 +29,12 @@ class EmergencySosDialog(
         if (primaryGuardian == null || !config.hasPrimaryGuardian) {
             feedbackEngine.speakUrgent("No emergency contact configured! Please configure your Guardian contact.")
             onOpenSettings()
+            onDismiss()
             return
         }
 
         val dialog = Dialog(context, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+        dialog.setOnDismissListener { onDismiss() }
 
         val scrollView = ScrollView(context).apply {
             setBackgroundColor(Color.parseColor("#0A0A0A"))
@@ -177,7 +180,7 @@ class EmergencySosDialog(
         scrollView.addView(container)
         dialog.setContentView(scrollView)
 
-        feedbackEngine.speakUrgent("Emergency menu. Tap Call Guardian to call ${primaryGuardian.name}, or tap Send Location to text your coordinates.")
+        feedbackEngine.speakUrgent("Emergency alert activated. Say CALL to call your guardian ${primaryGuardian.name}, or say LOCATION to text your coordinates. Say CANCEL to abort.")
         dialog.show()
     }
 }

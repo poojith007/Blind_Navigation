@@ -1,6 +1,7 @@
 package com.blindnav.app.engine
 
 import android.content.Context
+import android.media.AudioManager
 import android.os.Build
 import android.os.VibrationEffect
 import android.os.Vibrator
@@ -22,6 +23,11 @@ class FeedbackEngine(private val context: Context) : IFeedbackEngine, TextToSpee
 
     override var lastSpokenMessage: String = ""
         private set
+
+    override var isVoiceGuidanceMuted: Boolean = false
+    override var isVibrationEnabled: Boolean = true
+
+    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
 
     private val vibrator: Vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
         val vibratorManager = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
@@ -66,12 +72,25 @@ class FeedbackEngine(private val context: Context) : IFeedbackEngine, TextToSpee
         }
     }
 
+    override fun setVoiceGuidanceEnabled(enable: Boolean) {
+        isVoiceGuidanceMuted = !enable
+    }
+
+    override fun adjustVolume(increase: Boolean) {
+        val direction = if (increase) AudioManager.ADJUST_RAISE else AudioManager.ADJUST_LOWER
+        audioManager?.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, AudioManager.FLAG_SHOW_UI)
+    }
+
     override fun speakWithPriority(text: String, priority: SpeechPriority) {
+        // If voice guidance is muted, only allow EMERGENCY (critical collision / safety stop)
+        if (isVoiceGuidanceMuted && priority != SpeechPriority.EMERGENCY) {
+            return
+        }
+
         val now = System.currentTimeMillis()
 
         // 1. Priority 1: EMERGENCY (Immediate Collision / Stop)
         if (priority == SpeechPriority.EMERGENCY) {
-            // Deduplicate identical emergency only if uttered within 1.2s
             if (isSpeakingActive && text == lastSpokenMessage && (now - lastSpokenTimestamp) < 1200L) {
                 return
             }
@@ -85,11 +104,9 @@ class FeedbackEngine(private val context: Context) : IFeedbackEngine, TextToSpee
 
         // 2. Priority 2: SAFETY WARNING (Obstacle / Evasive action)
         if (priority == SpeechPriority.SAFETY_WARNING) {
-            // Cannot interrupt an active Emergency announcement
             if (isSpeakingActive && currentPriority == SpeechPriority.EMERGENCY && (now - lastSpokenTimestamp) < 2000L) {
                 return
             }
-            // Cooldown against duplicate warnings
             if (text == lastSpokenMessage && (now - lastSpokenTimestamp) < 3500L) {
                 return
             }
@@ -97,14 +114,12 @@ class FeedbackEngine(private val context: Context) : IFeedbackEngine, TextToSpee
             lastSpokenTimestamp = now
             currentPriority = SpeechPriority.SAFETY_WARNING
             if (!isTtsReady) return
-            // Interrupt lower priority (Navigation / Info)
             tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "SAFETY_${now}")
             return
         }
 
         // 3. Priority 3: NAVIGATION (Turn-by-turn maneuvers)
         if (priority == SpeechPriority.NAVIGATION) {
-            // Do not interrupt active Emergency or Safety warnings
             if (isSpeakingActive && (currentPriority == SpeechPriority.EMERGENCY || currentPriority == SpeechPriority.SAFETY_WARNING) && (now - lastSpokenTimestamp) < 2500L) {
                 return
             }
@@ -121,7 +136,6 @@ class FeedbackEngine(private val context: Context) : IFeedbackEngine, TextToSpee
 
         // 4. Priority 4: INFORMATION ("Path clear", spoken sparingly)
         if (priority == SpeechPriority.INFORMATION) {
-            // Only speak if completely idle and sufficient silence has passed
             if (isSpeakingActive || (now - lastSpokenTimestamp) < 4500L) {
                 return
             }
@@ -143,16 +157,15 @@ class FeedbackEngine(private val context: Context) : IFeedbackEngine, TextToSpee
 
     override fun repeatLastMessage() {
         if (lastSpokenMessage.isNotBlank()) {
-            speakNormal("Repeating: $lastSpokenMessage")
+            speakWithPriority("Repeating: $lastSpokenMessage", SpeechPriority.SAFETY_WARNING)
         } else {
-            speakNormal("No previous announcements to repeat.")
+            speakWithPriority("No previous announcements to repeat.", SpeechPriority.SAFETY_WARNING)
         }
     }
 
     override fun vibrateDanger() {
-        if (!vibrator.hasVibrator()) return
+        if (!isVibrationEnabled || !vibrator.hasVibrator()) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            // Heavy continuous double pulse pattern
             val timings = longArrayOf(0, 200, 100, 400)
             val amplitudes = intArrayOf(0, 255, 0, 255)
             val effect = VibrationEffect.createWaveform(timings, amplitudes, -1)
@@ -164,7 +177,7 @@ class FeedbackEngine(private val context: Context) : IFeedbackEngine, TextToSpee
     }
 
     override fun vibrateCaution() {
-        if (!vibrator.hasVibrator()) return
+        if (!isVibrationEnabled || !vibrator.hasVibrator()) return
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val effect = VibrationEffect.createOneShot(150, VibrationEffect.DEFAULT_AMPLITUDE)
             vibrator.vibrate(effect)

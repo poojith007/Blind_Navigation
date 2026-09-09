@@ -15,12 +15,16 @@ class ThreatPrioritizerTest {
         override var currentSpeechRate: Float = 1.1f
         override var lastSpokenMessage: String = ""
         override var currentPriority: SpeechPriority? = null
+        override var isVoiceGuidanceMuted: Boolean = false
+        override var isVibrationEnabled: Boolean = true
         val urgentSpoken = mutableListOf<String>()
         val normalSpoken = mutableListOf<String>()
         var dangerVibrations = 0
         var cautionVibrations = 0
 
         override fun setSpeechRate(rate: Float) { currentSpeechRate = rate }
+        override fun setVoiceGuidanceEnabled(enable: Boolean) { isVoiceGuidanceMuted = !enable }
+        override fun adjustVolume(increase: Boolean) {}
         override fun speakWithPriority(text: String, priority: SpeechPriority) {
             currentPriority = priority
             lastSpokenMessage = text
@@ -98,5 +102,23 @@ class ThreatPrioritizerTest {
         prioritizer.processFrameDetections(listOf(cautionChair))
         assertEquals(1, fakeFeedback.normalSpoken.size)
         assertEquals(1, fakeFeedback.cautionVibrations)
+    }
+
+    @Test
+    fun testProcessFrameDetections_safeFailureWhenPerceptionDegraded() {
+        // Safe Failure Mandate: Never show "PATH CLEAR" if perception is degraded/uncertain
+        val decision = prioritizer.processFrameDetections(
+            detections = emptyList(),
+            audioEvidence = null,
+            navProgress = null,
+            isUserMoving = true,
+            isPerceptionDegraded = true
+        )
+
+        org.junit.Assert.assertNotNull(decision)
+        assertTrue(decision!!.isPathUnclear)
+        assertEquals("Path unclear. Please stop.", decision.instruction)
+        assertTrue(decision.visualHeadline.contains("PATH UNCLEAR"))
+        org.junit.Assert.assertFalse(decision.visualHeadline.contains("PATH CLEAR"))
     }
 }

@@ -20,13 +20,15 @@ class EmergencyContactSetupDialog(
     private val context: Context,
     private val repository: EmergencyContactRepository,
     private val feedbackEngine: IFeedbackEngine,
-    private val onSaved: (EmergencyConfig) -> Unit = {}
+    private val onSaved: (EmergencyConfig) -> Unit = {},
+    private val onDismiss: () -> Unit = {}
 ) {
 
     fun show() {
         val currentConfig = repository.getEmergencyConfig()
 
         val dialog = Dialog(context, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+        dialog.setOnDismissListener { onDismiss() }
 
         val scrollView = ScrollView(context).apply {
             setBackgroundColor(Color.parseColor("#121212"))

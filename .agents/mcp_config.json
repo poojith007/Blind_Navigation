@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "figma": {
+      "command": "C:\\Python\\python.exe",
+      "args": [
+        "c:\\Users\\AWCC\\blind_navigation_app\\python\\figma_mcp_server.py"
+      ],
+      "env": {
+        "FIGMA_ACCESS_TOKEN": "figd_tst295SiDnrzHH1ZolSTsUykGADfVkg6gJWjJ5dH"
+      }
+    }
+  }
+}

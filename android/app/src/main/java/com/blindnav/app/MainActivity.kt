@@ -53,8 +53,10 @@ import com.google.android.gms.maps.model.MapStyleOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
 
 import com.blindnav.app.engine.EnvironmentalAudioEngine
+import com.blindnav.app.sensors.ShakeDetector
 import com.blindnav.app.engine.AudioEventType
 import com.blindnav.app.engine.AudioEvidence
 import com.blindnav.app.engine.GuidanceDecision
@@ -63,6 +65,14 @@ import com.blindnav.app.emergency.EmergencyContactRepository
 import com.blindnav.app.emergency.EmergencyContactSetupDialog
 import com.blindnav.app.emergency.EmergencySosDialog
 import com.blindnav.app.emergency.EmergencySosHandler
+import com.blindnav.app.ui.NavigationUiState
+import com.blindnav.app.ui.NavigationComponents
+import com.blindnav.app.db.CachedRouteEntity
+import com.blindnav.app.location.GpsConfidence
+import com.blindnav.app.network.ConnectionStatus
+import com.blindnav.app.network.OnlineOfflineManager
+import com.blindnav.app.offline.OfflineAreaManager
+import com.blindnav.app.offline.OfflineAreasDialog
 
 class MainActivity : AppCompatActivity() {
 
@@ -74,8 +84,11 @@ class MainActivity : AppCompatActivity() {
         IDLE, DESTINATION_SELECTED, NAVIGATING, ARRIVED
     }
 
+    private var currentUiState = NavigationUiState.HOME
     private var currentNavState = NavState.IDLE
+    private var isPerceptionDegraded = false
 
+    private lateinit var rootLayout: FrameLayout
     private lateinit var mainContentLayout: LinearLayout
     private lateinit var cameraContainer: FrameLayout
     private lateinit var mapContainer: FrameLayout
@@ -83,9 +96,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var overlayView: BoundingBoxOverlayView
     private lateinit var mapView: MapView
     private var googleMap: GoogleMap? = null
+    private lateinit var shakeDetector: ShakeDetector
 
     // Status, Main Guidance & Obstacle Alerts
     private lateinit var statusTextView: TextView
+    private lateinit var systemBanner: TextView
     private lateinit var mainGuidanceCard: LinearLayout
     private lateinit var mainGuidanceTextView: TextView
     private lateinit var obstacleAlertCard: LinearLayout
@@ -146,6 +161,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var locationHelper: LocationHelper
     private lateinit var fallDetector: FallDetector
     private lateinit var database: AppDatabase
+    private lateinit var onlineOfflineManager: OnlineOfflineManager
+    private lateinit var offlineAreaManager: OfflineAreaManager
+    private lateinit var connectionGpsRow: NavigationComponents.ConnectionGpsViewHolder
+    private lateinit var accessibleVoiceButton: Button
+    private lateinit var offlineAreasButton: Button
     private val navigationManager = InAppNavigationManager()
 
     // Navigation Map Elements
@@ -182,6 +202,30 @@ class MainActivity : AppCompatActivity() {
         emergencyRepository = EmergencyContactRepository(this, database, lifecycleScope)
         emergencySosHandler = EmergencySosHandler(this, feedbackEngine, locationHelper)
         emergencyContactPhone = emergencyRepository.getPrimaryGuardian()?.phoneNumber.orEmpty()
+        offlineAreaManager = OfflineAreaManager(this, database, lifecycleScope)
+
+        onlineOfflineManager = OnlineOfflineManager(this) { status, announcement ->
+            runOnUiThread {
+                if (::connectionGpsRow.isInitialized) {
+                    connectionGpsRow.updateNetwork(status)
+                }
+                if (announcement != null) {
+                    feedbackEngine.speakNormal(announcement)
+                }
+            }
+        }
+        onlineOfflineManager.startMonitoring()
+
+        locationHelper.onGpsConfidenceChanged = { confidence, announcement ->
+            runOnUiThread {
+                if (::connectionGpsRow.isInitialized) {
+                    connectionGpsRow.updateGps(confidence)
+                }
+                if (announcement != null) {
+                    feedbackEngine.speakNormal(announcement)
+                }
+            }
+        }
 
         setupAccessibleUiLayout(savedInstanceState)
 
@@ -212,6 +256,7 @@ class MainActivity : AppCompatActivity() {
             locationHelper = locationHelper,
             database = database,
             coroutineScope = lifecycleScope,
+            offlineAreaManager = offlineAreaManager,
             onToggleDetection = { paused ->
                 isDetectionPaused = paused
                 val msg = if (isDetectionPaused) "Detection Paused." else "Detection Resumed."
@@ -228,10 +273,16 @@ class MainActivity : AppCompatActivity() {
                 }
             },
             onCancelEmergency = {
-                if (fallDetector.isCountdownActive) {
-                    fallDetector.cancelFallAlert()
-                } else {
-                    feedbackEngine.speakNormal("No active emergency countdown.")
+                runOnUiThread {
+                    if (fallDetector.isCountdownActive) {
+                        fallDetector.cancelFallAlert()
+                    } else if (currentUiState == NavigationUiState.ROUTE_PREVIEW) {
+                        cancelDestinationSelection()
+                    } else if (navigationManager.isNavigating) {
+                        stopWalkingNavigation()
+                    } else {
+                        feedbackEngine.speakNormal("No active action to cancel.")
+                    }
                 }
             },
             emergencyContactNumberProvider = { emergencyContactPhone },
@@ -253,6 +304,68 @@ class MainActivity : AppCompatActivity() {
                     executeDestinationSearch(destination)
                 }
             },
+            onStartNavigation = {
+                runOnUiThread {
+                    if (currentPreview != null || selectedPinLatLng != null) {
+                        startWalkingNavigationFromPreview()
+                    } else if (navigationManager.isNavigating) {
+                        feedbackEngine.speakNormal("Already navigating to ${navigationManager.destinationName}.")
+                    } else {
+                        feedbackEngine.speakNormal("No destination selected. Say: Navigate to, followed by your destination.")
+                    }
+                }
+            },
+            onCallGuardian = {
+                runOnUiThread {
+                    val guardian = emergencyRepository.getPrimaryGuardian()
+                    if (guardian != null) {
+                        emergencySosHandler.callGuardian(guardian)
+                    } else {
+                        feedbackEngine.speakUrgent("No emergency contact configured! Please configure your Guardian contact.")
+                        showEmergencySetupDialog()
+                    }
+                }
+            },
+            onSendLocationAlert = {
+                runOnUiThread {
+                    val guardian = emergencyRepository.getPrimaryGuardian()
+                    if (guardian != null) {
+                        emergencySosHandler.sendLocationAlert(guardian, emergencyRepository.getBackupGuardian())
+                    } else {
+                        feedbackEngine.speakUrgent("No emergency contact configured! Please configure your Guardian contact.")
+                        showEmergencySetupDialog()
+                    }
+                }
+            },
+            onInquireDistance = {
+                runOnUiThread {
+                    if (navigationManager.isNavigating) {
+                        val loc = locationHelper.lastLocation
+                        if (loc != null) {
+                            val progress = navigationManager.updateProgress(loc)
+                            val totalStr = navigationManager.formatDistance(progress.totalRemainingDistanceMeters)
+                            val step = progress.nextStep?.instruction ?: "Proceed straight"
+                            feedbackEngine.speakNormal("$totalStr remaining to ${navigationManager.destinationName}, approximately ${progress.estimatedRemainingMinutes} minutes walk. Next: $step.")
+                        } else {
+                            feedbackEngine.speakNormal("Calculating remaining distance...")
+                        }
+                    } else {
+                        feedbackEngine.speakNormal("No active navigation. Say: Navigate to, followed by your destination.")
+                    }
+                }
+            },
+            onInquireObstacles = {
+                runOnUiThread {
+                    val decision = threatPrioritizer.latestDecision
+                    if (decision != null && decision.isObstaclePresent && decision.targetObject != null) {
+                        feedbackEngine.speakNormal("Warning: ${decision.instruction}")
+                    } else if (decision != null && decision.isPathUnclear) {
+                        feedbackEngine.speakNormal("Path unclear. Please stop and verify surroundings.")
+                    } else {
+                        feedbackEngine.speakNormal("Path clear ahead. No obstacles in walking corridor.")
+                    }
+                }
+            },
             onListeningStarted = {
                 if (::environmentalAudioEngine.isInitialized) {
                     environmentalAudioEngine.pauseListening()
@@ -272,6 +385,86 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread {
                     showEmergencySetupDialog()
                 }
+            },
+            onPauseNavigation = {
+                runOnUiThread {
+                    navigationManager.pauseNavigation()
+                    statusTextView.text = "⏸ NAVIGATION PAUSED"
+                    statusTextView.setTextColor(Color.parseColor("#FFD600"))
+                }
+            },
+            onResumeNavigation = {
+                runOnUiThread {
+                    navigationManager.resumeNavigation()
+                    updateUiForState(NavigationUiState.NAV_PATH_CLEAR)
+                    announceCurrentDirection()
+                }
+            },
+            onGoHome = {
+                runOnUiThread {
+                    lifecycleScope.launch(Dispatchers.IO) {
+                        val prefs = database.detectionDao().getPreferences()
+                        if (prefs != null && prefs.homeAddress.isNotBlank()) {
+                            withContext(Dispatchers.Main) {
+                                searchEditText.setText(prefs.homeAddress)
+                                executeDestinationSearch(prefs.homeAddress)
+                            }
+                        } else {
+                            withContext(Dispatchers.Main) {
+                                feedbackEngine.speakNormal("No home address configured. Say: Navigate to, followed by your destination.")
+                            }
+                        }
+                    }
+                }
+            },
+            onStopSafety = {
+                runOnUiThread {
+                    if (navigationManager.isNavigating) {
+                        stopWalkingNavigation()
+                    }
+                }
+            },
+            onDownloadCurrentArea = {
+                runOnUiThread {
+                    val loc = locationHelper.lastLocation
+                    val name = locationHelper.lastStreetName ?: "Current Area"
+                    if (loc != null) {
+                        onlineOfflineManager.setTemporaryStatus(ConnectionStatus.DOWNLOADING)
+                        feedbackEngine.speakNormal("Downloading current area $name for offline navigation.")
+                        offlineAreaManager.downloadCurrentArea(loc.latitude, loc.longitude, name) { area ->
+                            onlineOfflineManager.setTemporaryStatus(if (onlineOfflineManager.checkIsOnline()) ConnectionStatus.ONLINE else ConnectionStatus.OFFLINE)
+                            feedbackEngine.speakNormal("Area ${area.areaName} is now available offline. Storage: ${area.formattedSize}.")
+                        }
+                    } else {
+                        feedbackEngine.speakNormal("Acquiring GPS location before downloading current area. Please wait.")
+                    }
+                }
+            },
+            onDownloadArea = { areaName ->
+                runOnUiThread {
+                    onlineOfflineManager.setTemporaryStatus(ConnectionStatus.DOWNLOADING)
+                    feedbackEngine.speakNormal("Downloading $areaName for offline navigation.")
+                    offlineAreaManager.downloadArea(areaName, "$areaName Urban Walking Corridor", 12_500_000L) { area ->
+                        onlineOfflineManager.setTemporaryStatus(if (onlineOfflineManager.checkIsOnline()) ConnectionStatus.ONLINE else ConnectionStatus.OFFLINE)
+                        feedbackEngine.speakNormal("Area ${area.areaName} is now available offline.")
+                    }
+                }
+            },
+            onShowOfflineAreas = {
+                runOnUiThread {
+                    showOfflineAreasDialog()
+                }
+            },
+            onDeleteOfflineArea = { areaName ->
+                runOnUiThread {
+                    offlineAreaManager.deleteAreaByName(areaName) { deleted ->
+                        if (deleted) {
+                            feedbackEngine.speakNormal("Deleted offline area $areaName.")
+                        } else {
+                            feedbackEngine.speakNormal("Offline area $areaName not found.")
+                        }
+                    }
+                }
             }
         )
 
@@ -285,6 +478,13 @@ class MainActivity : AppCompatActivity() {
 
         setupGestureListener()
         fallDetector.start()
+        shakeDetector = ShakeDetector(this) {
+            feedbackEngine.vibrateCaution()
+            runOnUiThread {
+                voiceAssistant.startListening()
+            }
+        }
+        shakeDetector.start()
     }
 
     private fun loadUserPreferences() {
@@ -296,6 +496,8 @@ class MainActivity : AppCompatActivity() {
                 }
                 withContext(Dispatchers.Main) {
                     feedbackEngine.setSpeechRate(prefs.speechRate)
+                    feedbackEngine.isVoiceGuidanceMuted = !prefs.isVoiceGuidanceEnabled
+                    feedbackEngine.isVibrationEnabled = prefs.isVibrationEnabled
                 }
             } else {
                 database.detectionDao().savePreferences(
@@ -303,7 +505,9 @@ class MainActivity : AppCompatActivity() {
                         userId = 1,
                         speechRate = 1.15f,
                         vibrationIntensity = 2,
-                        emergencyContactPhone = emergencyContactPhone
+                        emergencyContactPhone = emergencyContactPhone,
+                        isVoiceGuidanceEnabled = true,
+                        isVibrationEnabled = true
                     )
                 )
             }
@@ -311,7 +515,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupAccessibleUiLayout(savedInstanceState: Bundle?) {
-        val rootLayout = FrameLayout(this).apply {
+        rootLayout = FrameLayout(this).apply {
             contentDescription = "Blind Navigation Main Screen. View split camera and live map. Double tap to pause detection. Long press to speak."
         }
 
@@ -405,15 +609,14 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
+        // 3a0. Connection and GPS Status Badges
+        connectionGpsRow = NavigationComponents.createConnectionGpsRow(this)
+        topOverlayContainer.addView(connectionGpsRow.container)
+        connectionGpsRow.updateNetwork(onlineOfflineManager.currentStatus)
+        connectionGpsRow.updateGps(locationHelper.currentGpsConfidence)
+
         // 3a. AI Status Pill
-        statusTextView = TextView(this).apply {
-            text = "● PATH CLEAR  |  AI SCANNING"
-            textSize = 14f
-            setTextColor(Color.parseColor("#00E676"))
-            background = ContextCompat.getDrawable(this@MainActivity, R.drawable.bg_status_pill)
-            setPadding(32, 16, 32, 16)
-            gravity = Gravity.CENTER
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        statusTextView = NavigationComponents.createStatusPill(this).apply {
             val p = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
@@ -424,6 +627,10 @@ class MainActivity : AppCompatActivity() {
             layoutParams = p
         }
         topOverlayContainer.addView(statusTextView)
+
+        // 3a2. Contextual System Banner (GPS Weak, Offline, Camera Unavailable)
+        systemBanner = NavigationComponents.createSystemBanner(this)
+        topOverlayContainer.addView(systemBanner)
 
         // 3b. Dedicated Debounced Obstacle Warning Banner
         obstacleAlertCard = LinearLayout(this).apply {
@@ -535,6 +742,11 @@ class MainActivity : AppCompatActivity() {
                     executeDestinationSearch(text.toString())
                     true
                 } else false
+            }
+            setOnFocusChangeListener { _, hasFocus ->
+                if (hasFocus && currentUiState == NavigationUiState.HOME) {
+                    updateUiForState(NavigationUiState.DESTINATION_SEARCH)
+                }
             }
         }
         searchContainer.addView(searchEditText)
@@ -847,8 +1059,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         viewModeButton = Button(this).apply {
-            text = "📷/🗺 SPLIT VIEW"
-            textSize = 13f
+            text = "📷/🗺 VIEW"
+            textSize = 12f
             setTextColor(Color.WHITE)
             background = ContextCompat.getDrawable(this@MainActivity, R.drawable.bg_primary_button)
             elevation = 8f
@@ -859,7 +1071,7 @@ class MainActivity : AppCompatActivity() {
                 120,
                 1.0f
             ).apply {
-                setMargins(0, 0, 6, 0)
+                setMargins(0, 0, 4, 0)
             }
             setOnClickListener {
                 cycleViewMode()
@@ -868,8 +1080,8 @@ class MainActivity : AppCompatActivity() {
         controlRow.addView(viewModeButton)
 
         demoModeButton = Button(this).apply {
-            text = "🛠️ DEMO OFF"
-            textSize = 13f
+            text = "🛠️ DEMO"
+            textSize = 12f
             setTextColor(Color.WHITE)
             background = ContextCompat.getDrawable(this@MainActivity, R.drawable.bg_glass_card)
             elevation = 8f
@@ -880,12 +1092,12 @@ class MainActivity : AppCompatActivity() {
                 120,
                 1.0f
             ).apply {
-                setMargins(6, 0, 0, 0)
+                setMargins(4, 0, 4, 0)
             }
             setOnClickListener {
                 isDemoMode = !isDemoMode
                 overlayView.isDemoModeEnabled = isDemoMode
-                text = if (isDemoMode) "🛠️ DEMO ON" else "🛠️ DEMO OFF"
+                text = if (isDemoMode) "🛠️ DEMO ON" else "🛠️ DEMO"
                 setTextColor(if (isDemoMode) Color.parseColor("#00E5FF") else Color.WHITE)
                 demoDiagnosticCard.visibility = if (isDemoMode) View.VISIBLE else View.GONE
                 feedbackEngine.speakNormal(
@@ -896,9 +1108,30 @@ class MainActivity : AppCompatActivity() {
         }
         controlRow.addView(demoModeButton)
 
+        offlineAreasButton = Button(this).apply {
+            text = "🗺️ AREAS"
+            textSize = 12f
+            setTextColor(Color.WHITE)
+            background = ContextCompat.getDrawable(this@MainActivity, R.drawable.bg_primary_button)
+            elevation = 8f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            contentDescription = "Offline Areas. Download or manage offline maps and routes."
+            layoutParams = LinearLayout.LayoutParams(
+                0,
+                120,
+                1.0f
+            ).apply {
+                setMargins(4, 0, 4, 0)
+            }
+            setOnClickListener {
+                showOfflineAreasDialog()
+            }
+        }
+        controlRow.addView(offlineAreasButton)
+
         val guardianButton = Button(this).apply {
-            text = "🛡️ GUARDIAN"
-            textSize = 13f
+            text = "🛡️ GUARD"
+            textSize = 12f
             setTextColor(Color.WHITE)
             background = ContextCompat.getDrawable(this@MainActivity, R.drawable.bg_secondary_button)
             elevation = 8f
@@ -909,7 +1142,7 @@ class MainActivity : AppCompatActivity() {
                 120,
                 1.0f
             ).apply {
-                setMargins(6, 0, 0, 0)
+                setMargins(4, 0, 0, 0)
             }
             setOnClickListener {
                 showEmergencySetupDialog()
@@ -977,38 +1210,107 @@ class MainActivity : AppCompatActivity() {
 
         rootLayout.addView(topOverlayContainer)
 
-        // 4. Bottom Emergency SOS Button
-        emergencyButton = Button(this).apply {
-            text = "🚨 EMERGENCY SOS"
-            textSize = 20f
-            setTextColor(Color.WHITE)
-            background = ContextCompat.getDrawable(this@MainActivity, R.drawable.bg_emergency_sos)
+        // 4. Bottom Accessible Button Row (Voice Command + Emergency SOS)
+        val bottomActionContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
             elevation = 20f
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            contentDescription = "Emergency SOS Button. Tap to call guardian or send distress location."
             val params = FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
-                160
+                FrameLayout.LayoutParams.WRAP_CONTENT
             ).apply {
                 gravity = Gravity.BOTTOM
-                setMargins(24, 0, 24, 36)
+                setMargins(20, 0, 20, 30)
             }
             layoutParams = params
-            setOnClickListener {
-                showEmergencySosDialog()
+        }
+
+        accessibleVoiceButton = NavigationComponents.createVoiceButton(this) {
+            voiceAssistant.startListening()
+        }.apply {
+            layoutParams = LinearLayout.LayoutParams(0, 160, 1.2f).apply {
+                setMargins(0, 0, 8, 0)
             }
         }
-        rootLayout.addView(emergencyButton)
+        bottomActionContainer.addView(accessibleVoiceButton)
+
+        emergencyButton = NavigationComponents.createEmergencyButton(this) {
+            showEmergencySosDialog()
+        }.apply {
+            layoutParams = LinearLayout.LayoutParams(0, 160, 1.0f).apply {
+                setMargins(8, 0, 0, 0)
+            }
+        }
+        bottomActionContainer.addView(emergencyButton)
+
+        rootLayout.addView(bottomActionContainer)
 
         setContentView(rootLayout)
-        updateUiForState(NavState.IDLE)
+        updateUiForState(NavigationUiState.HOME)
     }
 
-    private fun updateUiForState(state: NavState) {
-        currentNavState = state
+    private fun updateUiForState(state: NavigationUiState) {
+        currentUiState = state
+        currentNavState = when (state) {
+            NavigationUiState.HOME, NavigationUiState.DESTINATION_SEARCH, NavigationUiState.SETTINGS -> NavState.IDLE
+            NavigationUiState.ROUTE_PREVIEW -> NavState.DESTINATION_SELECTED
+            NavigationUiState.NAV_PATH_CLEAR, NavigationUiState.NAV_APPROACHING_TURN,
+            NavigationUiState.OBSTACLE_WARNING, NavigationUiState.CRITICAL_STOP,
+            NavigationUiState.PATH_UNCLEAR, NavigationUiState.GPS_WEAK,
+            NavigationUiState.OFFLINE, NavigationUiState.CAMERA_UNAVAILABLE -> NavState.NAVIGATING
+            NavigationUiState.DESTINATION_REACHED -> NavState.ARRIVED
+            NavigationUiState.GUARDIAN_EMERGENCY -> if (navigationManager.isNavigating) NavState.NAVIGATING else NavState.IDLE
+        }
+
         runOnUiThread {
+            // Dual-encoded status indicator (Icon + Text)
+            val (statusText, statusColor) = when (state) {
+                NavigationUiState.CRITICAL_STOP -> Pair("🛑 STOP IMMEDIATELY", Color.parseColor("#FF1744"))
+                NavigationUiState.OBSTACLE_WARNING -> Pair("⚠️ CAUTION: OBSTACLE", Color.parseColor("#FFD600"))
+                NavigationUiState.PATH_UNCLEAR -> Pair("❓ PATH UNCLEAR | PLEASE STOP", Color.parseColor("#FF9100"))
+                NavigationUiState.NAV_APPROACHING_TURN -> Pair("↗️ APPROACHING TURN", Color.parseColor("#00E5FF"))
+                NavigationUiState.NAV_PATH_CLEAR -> Pair("● PATH CLEAR | NAVIGATING", Color.parseColor("#00E676"))
+                NavigationUiState.DESTINATION_REACHED -> Pair("🎯 ARRIVED AT DESTINATION", Color.parseColor("#00E676"))
+                NavigationUiState.ROUTE_PREVIEW -> Pair("📍 ROUTE PREVIEW", Color.parseColor("#00E5FF"))
+                NavigationUiState.DESTINATION_SEARCH -> Pair("🔍 SEARCHING DESTINATION", Color.parseColor("#00E5FF"))
+                NavigationUiState.GUARDIAN_EMERGENCY -> Pair("🚨 EMERGENCY SOS", Color.parseColor("#FF1744"))
+                NavigationUiState.SETTINGS -> Pair("⚙️ GUARDIAN SETTINGS", Color.parseColor("#00E5FF"))
+                NavigationUiState.GPS_WEAK -> Pair("📡 GPS SIGNAL WEAK", Color.parseColor("#FFD600"))
+                NavigationUiState.OFFLINE -> Pair("📶 OFFLINE MODE", Color.parseColor("#FFD600"))
+                NavigationUiState.CAMERA_UNAVAILABLE -> Pair("📷 CAMERA UNAVAILABLE", Color.parseColor("#FF1744"))
+                NavigationUiState.HOME -> Pair(
+                    if (isDetectionPaused) "⏸ DETECTION PAUSED" else "● PATH CLEAR | AI SCANNING",
+                    if (isDetectionPaused) Color.parseColor("#FFD600") else Color.parseColor("#00E676")
+                )
+            }
+            statusTextView.text = statusText
+            statusTextView.setTextColor(statusColor)
+
+            // System banner handling for hardware/system states
             when (state) {
-                NavState.IDLE -> {
+                NavigationUiState.GPS_WEAK -> {
+                    systemBanner.visibility = View.VISIBLE
+                    systemBanner.text = "📡 GPS Signal Weak. Position estimated by motion."
+                }
+                NavigationUiState.OFFLINE -> {
+                    systemBanner.visibility = View.VISIBLE
+                    systemBanner.text = "📶 Offline Mode Active. On-device vision & safety active."
+                }
+                NavigationUiState.CAMERA_UNAVAILABLE -> {
+                    systemBanner.visibility = View.VISIBLE
+                    systemBanner.text = "📷 Camera Feed Unavailable. Please check lens."
+                }
+                else -> {
+                    if (currentUiState != NavigationUiState.GPS_WEAK &&
+                        currentUiState != NavigationUiState.OFFLINE &&
+                        currentUiState != NavigationUiState.CAMERA_UNAVAILABLE) {
+                        systemBanner.visibility = View.GONE
+                    }
+                }
+            }
+
+            // Visible Cards
+            when (state) {
+                NavigationUiState.HOME, NavigationUiState.DESTINATION_SEARCH -> {
                     searchContainer.visibility = View.VISIBLE
                     destinationPreviewCard.visibility = View.GONE
                     navHudLayout.visibility = View.GONE
@@ -1017,7 +1319,7 @@ class MainActivity : AppCompatActivity() {
                     mainGuidanceCard.visibility = View.VISIBLE
                     mapHintTextView.text = "📍 Tap or search above to choose your destination"
                 }
-                NavState.DESTINATION_SELECTED -> {
+                NavigationUiState.ROUTE_PREVIEW -> {
                     searchContainer.visibility = View.GONE
                     destinationPreviewCard.visibility = View.VISIBLE
                     navHudLayout.visibility = View.GONE
@@ -1026,7 +1328,9 @@ class MainActivity : AppCompatActivity() {
                     mainGuidanceCard.visibility = View.GONE
                     mapHintTextView.text = "📍 Route preview. Tap START NAVIGATION below."
                 }
-                NavState.NAVIGATING -> {
+                NavigationUiState.NAV_PATH_CLEAR, NavigationUiState.NAV_APPROACHING_TURN,
+                NavigationUiState.OBSTACLE_WARNING, NavigationUiState.CRITICAL_STOP,
+                NavigationUiState.PATH_UNCLEAR -> {
                     searchContainer.visibility = View.GONE
                     destinationPreviewCard.visibility = View.GONE
                     navHudLayout.visibility = View.VISIBLE
@@ -1035,7 +1339,7 @@ class MainActivity : AppCompatActivity() {
                     mainGuidanceCard.visibility = View.GONE
                     mapHintTextView.text = "📍 Navigating. Follow turn-by-turn guidance."
                 }
-                NavState.ARRIVED -> {
+                NavigationUiState.DESTINATION_REACHED -> {
                     searchContainer.visibility = View.GONE
                     destinationPreviewCard.visibility = View.GONE
                     navHudLayout.visibility = View.GONE
@@ -1044,8 +1348,22 @@ class MainActivity : AppCompatActivity() {
                     mainGuidanceCard.visibility = View.GONE
                     mapHintTextView.text = "🎯 Destination reached!"
                 }
+                NavigationUiState.GUARDIAN_EMERGENCY, NavigationUiState.SETTINGS -> {
+                    // Modal dialogs handled separately
+                }
+                else -> {}
             }
         }
+    }
+
+    private fun updateUiForState(state: NavState) {
+        val uiState = when (state) {
+            NavState.IDLE -> NavigationUiState.HOME
+            NavState.DESTINATION_SELECTED -> NavigationUiState.ROUTE_PREVIEW
+            NavState.NAVIGATING -> NavigationUiState.NAV_PATH_CLEAR
+            NavState.ARRIVED -> NavigationUiState.DESTINATION_REACHED
+        }
+        updateUiForState(uiState)
     }
 
     private fun setupGoogleMap(map: GoogleMap) {
@@ -1125,8 +1443,14 @@ class MainActivity : AppCompatActivity() {
                 destinationMarker?.title = placeName
                 destinationMarker?.snippet = "$distStr (${preview.estimatedMinutes} min walk)"
 
-                updateUiForState(NavState.DESTINATION_SELECTED)
-                feedbackEngine.speakNormal("Destination selected: $placeName. Distance: $distStr. Estimated ${preview.estimatedMinutes} minutes walk. Tap Start Navigation to begin.")
+                updateUiForState(NavigationUiState.ROUTE_PREVIEW)
+                feedbackEngine.speakNormal("Destination selected: $placeName. Distance: $distStr. Estimated ${preview.estimatedMinutes} minutes walk. Say START to begin walking navigation, or say CANCEL.")
+                lifecycleScope.launch(Dispatchers.Main) {
+                    delay(4500L)
+                    if (currentUiState == NavigationUiState.ROUTE_PREVIEW) {
+                        voiceAssistant.startListening()
+                    }
+                }
             }
         }
     }
@@ -1140,8 +1464,47 @@ class MainActivity : AppCompatActivity() {
         }
 
         hideKeyboard()
-        feedbackEngine.speakNormal("Searching for $trimmed...")
         searchEditText.setText(trimmed)
+
+        if (!onlineOfflineManager.checkIsOnline()) {
+            feedbackEngine.speakNormal("Offline mode. Searching saved routes for $trimmed.")
+            lifecycleScope.launch(Dispatchers.IO) {
+                val cachedRoutes = database.detectionDao().getCachedRoutes()
+                val match = cachedRoutes.firstOrNull { it.destinationName.contains(trimmed, ignoreCase = true) }
+                if (match != null) {
+                    withContext(Dispatchers.Main) {
+                        val destLoc = Location("cache").apply {
+                            latitude = match.destinationLat
+                            longitude = match.destinationLng
+                        }
+                        val currentLoc = locationHelper.lastLocation ?: Location("user").apply {
+                            latitude = match.destinationLat - 0.0020
+                            longitude = match.destinationLng - 0.0020
+                        }
+                        val progress = navigationManager.startNavigationFromCache(
+                            cachedDestination = match.destinationName,
+                            targetLocation = destLoc,
+                            routeJson = match.routeJson,
+                            currentLocation = currentLoc
+                        )
+                        drawRouteOnMap(currentLoc, destLoc)
+                        updateNavHud(progress)
+                        updateUiForState(NavState.NAVIGATING)
+                        onlineOfflineManager.isNavigatingActive = true
+                        val firstStep = progress.nextStep?.instruction ?: "Walk straight"
+                        feedbackEngine.speakNormal("Starting offline navigation to ${match.destinationName}. Next: $firstStep. Continuing with local sensor guidance.")
+                    }
+                } else {
+                    withContext(Dispatchers.Main) {
+                        feedbackEngine.speakNormal("No offline route found for $trimmed. Please connect to the internet or open offline areas.")
+                        Toast.makeText(this@MainActivity, "No offline route found for '$trimmed'", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            return
+        }
+
+        feedbackEngine.speakNormal("Searching for $trimmed...")
 
         locationHelper.searchDestination(trimmed) { targetLoc, resolvedName ->
             runOnUiThread {
@@ -1173,8 +1536,14 @@ class MainActivity : AppCompatActivity() {
                     val distStr = navigationManager.formatDistance(preview.totalDistanceMeters)
                     destinationDetailsTextView.text = "Distance: $distStr  •  ~${preview.estimatedMinutes} mins walk"
 
-                    updateUiForState(NavState.DESTINATION_SELECTED)
-                    feedbackEngine.speakNormal("Found $displayName. Distance: $distStr. Estimated ${preview.estimatedMinutes} minutes walk. Tap Start Navigation to begin.")
+                    updateUiForState(NavigationUiState.ROUTE_PREVIEW)
+                    feedbackEngine.speakNormal("Found $displayName. Distance: $distStr. Estimated ${preview.estimatedMinutes} minutes walk. Say START to begin walking navigation, or say CANCEL.")
+                    lifecycleScope.launch(Dispatchers.Main) {
+                        delay(4500L)
+                        if (currentUiState == NavigationUiState.ROUTE_PREVIEW) {
+                            voiceAssistant.startListening()
+                        }
+                    }
                 } else {
                     feedbackEngine.speakNormal("Could not find location for $trimmed. Please check spelling or try a nearby street name.")
                     Toast.makeText(this@MainActivity, "Destination not found. Try another search.", Toast.LENGTH_SHORT).show()
@@ -1235,10 +1604,24 @@ class MainActivity : AppCompatActivity() {
         drawRouteOnMap(currentLoc, preview.destinationLocation)
         updateNavHud(progress)
         updateUiForState(NavState.NAVIGATING)
+        onlineOfflineManager.isNavigatingActive = true
+
+        // Cache route to Room DB for offline fallback
+        lifecycleScope.launch(Dispatchers.IO) {
+            val stepsJson = navigationManager.serializeRouteToJson(preview.routeSteps)
+            val cachedRoute = CachedRouteEntity(
+                destinationName = preview.destinationName,
+                destinationLat = preview.destinationLocation.latitude,
+                destinationLng = preview.destinationLocation.longitude,
+                routeJson = stepsJson,
+                totalDistanceMeters = preview.totalDistanceMeters
+            )
+            database.detectionDao().saveCachedRoute(cachedRoute)
+        }
 
         val firstStep = progress.nextStep?.instruction ?: "Walk straight"
         val dist = progress.distanceToNextStepMeters.toInt()
-        val speech = "Starting walking navigation to ${preview.destinationName}. In $dist meters, $firstStep."
+        val speech = "Starting walking navigation to ${preview.destinationName}. In $dist meters, $firstStep. You can say: Next turn, How far, or Stop navigation at any time."
         feedbackEngine.speakNormal(speech)
 
         googleMap?.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(currentLoc.latitude, currentLoc.longitude), 18.5f))
@@ -1254,10 +1637,24 @@ class MainActivity : AppCompatActivity() {
         drawRouteOnMap(currentLoc, targetLocation)
         updateNavHud(progress)
         updateUiForState(NavState.NAVIGATING)
+        onlineOfflineManager.isNavigatingActive = true
+
+        // Cache route to Room DB for offline fallback
+        lifecycleScope.launch(Dispatchers.IO) {
+            val stepsJson = navigationManager.serializeRouteToJson(navigationManager.currentSteps)
+            val cachedRoute = CachedRouteEntity(
+                destinationName = targetName,
+                destinationLat = targetLocation.latitude,
+                destinationLng = targetLocation.longitude,
+                routeJson = stepsJson,
+                totalDistanceMeters = progress.totalRemainingDistanceMeters
+            )
+            database.detectionDao().saveCachedRoute(cachedRoute)
+        }
 
         val firstStep = progress.nextStep?.instruction ?: "Walk straight"
         val dist = progress.distanceToNextStepMeters.toInt()
-        val speech = "Starting walking navigation to $targetName. In $dist meters, $firstStep."
+        val speech = "Starting walking navigation to $targetName. In $dist meters, $firstStep. You can say: Next turn, How far, or Stop navigation at any time."
         feedbackEngine.speakNormal(speech)
 
         googleMap?.animateCamera(CameraUpdateFactory.newLatLngZoom(LatLng(currentLoc.latitude, currentLoc.longitude), 18.5f))
@@ -1265,6 +1662,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun stopWalkingNavigation() {
         navigationManager.stopNavigation()
+        onlineOfflineManager.isNavigatingActive = false
         routePolyline?.remove()
         routePolyline = null
         destinationMarker?.remove()
@@ -1286,7 +1684,35 @@ class MainActivity : AppCompatActivity() {
         feedbackEngine.speakNormal("Destination selection canceled.")
     }
 
+    private fun showOfflineAreasDialog() {
+        val dialog = OfflineAreasDialog(
+            context = this,
+            offlineAreaManager = offlineAreaManager,
+            feedbackEngine = feedbackEngine,
+            onDownloadCurrentArea = {
+                val loc = locationHelper.lastLocation
+                val name = locationHelper.lastStreetName ?: "Current Area"
+                if (loc != null) {
+                    onlineOfflineManager.setTemporaryStatus(ConnectionStatus.DOWNLOADING)
+                    feedbackEngine.speakNormal("Downloading current area $name for offline navigation.")
+                    offlineAreaManager.downloadCurrentArea(loc.latitude, loc.longitude, name) { area ->
+                        onlineOfflineManager.setTemporaryStatus(if (onlineOfflineManager.checkIsOnline()) ConnectionStatus.ONLINE else ConnectionStatus.OFFLINE)
+                        feedbackEngine.speakNormal("Area ${area.areaName} is now available offline. Storage: ${area.formattedSize}.")
+                    }
+                } else {
+                    feedbackEngine.speakNormal("Acquiring GPS location before downloading current area. Please wait.")
+                }
+            },
+            onDownloadNewArea = {
+                feedbackEngine.speakNormal("Please say: Download area, followed by the city name.")
+            }
+        )
+        dialog.show()
+    }
+
     private fun showEmergencySosDialog() {
+        val prevState = currentUiState
+        updateUiForState(NavigationUiState.GUARDIAN_EMERGENCY)
         if (emergencyRepository.hasGuardian()) {
             val dialog = EmergencySosDialog(
                 context = this,
@@ -1295,6 +1721,9 @@ class MainActivity : AppCompatActivity() {
                 feedbackEngine = feedbackEngine,
                 onOpenSettings = {
                     showEmergencySetupDialog()
+                },
+                onDismiss = {
+                    updateUiForState(prevState)
                 }
             )
             dialog.show()
@@ -1305,12 +1734,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showEmergencySetupDialog() {
+        val prevState = currentUiState
+        updateUiForState(NavigationUiState.SETTINGS)
         val setupDialog = EmergencyContactSetupDialog(
             context = this,
             repository = emergencyRepository,
             feedbackEngine = feedbackEngine,
             onSaved = { config ->
                 emergencyContactPhone = config.primaryGuardian?.phoneNumber.orEmpty()
+            },
+            onDismiss = {
+                updateUiForState(prevState)
             }
         )
         setupDialog.show()
@@ -1455,6 +1889,7 @@ class MainActivity : AppCompatActivity() {
             lifecycleOwner = this,
             previewView = previewView,
             onLowLightDetected = { isDark ->
+                isPerceptionDegraded = isDark
                 if (isDark) {
                     runOnUiThread {
                         feedbackEngine.speakNormal("Low light detected. Consider saying: Light on, to improve visibility.")
@@ -1475,14 +1910,20 @@ class MainActivity : AppCompatActivity() {
                     detections = detections,
                     audioEvidence = audioEvidence,
                     navProgress = navProgress,
-                    isUserMoving = (loc?.speed ?: 0f) > 0.3f
+                    isUserMoving = (loc?.speed ?: 0f) > 0.3f,
+                    isPerceptionDegraded = isPerceptionDegraded
                 )
 
                 runOnUiThread {
                     overlayView.updateDetections(detections)
                     val now = System.currentTimeMillis()
 
-                    if (decision != null && decision.isObstaclePresent && decision.targetObject != null) {
+                    if (decision != null && decision.isPathUnclear) {
+                        // Safe Failure State: Never show "PATH CLEAR" if perception is degraded
+                        updateUiForState(NavigationUiState.PATH_UNCLEAR)
+                        mainGuidanceTextView.text = decision.instruction
+                        mainGuidanceTextView.setTextColor(Color.parseColor("#FF9100"))
+                    } else if (decision != null && decision.isObstaclePresent && decision.targetObject != null) {
                         lastObstacleDisplayTime = now
                         val isDanger = decision.priority == SpeechPriority.EMERGENCY
                         val color = if (isDanger) Color.parseColor("#FF1744") else Color.parseColor("#FFD600")
@@ -1493,6 +1934,9 @@ class MainActivity : AppCompatActivity() {
                         obstacleSeverityBadge.text = if (isDanger) "EMERGENCY" else "CAUTION"
                         obstacleSeverityBadge.setTextColor(color)
 
+                        val nextState = if (isDanger) NavigationUiState.CRITICAL_STOP else NavigationUiState.OBSTACLE_WARNING
+                        updateUiForState(nextState)
+
                         statusTextView.text = decision.visualHeadline
                         statusTextView.setTextColor(color)
                         mainGuidanceTextView.text = decision.instruction
@@ -1500,16 +1944,22 @@ class MainActivity : AppCompatActivity() {
                     } else {
                         if (now - lastObstacleDisplayTime > 2200L) {
                             obstacleAlertCard.visibility = View.GONE
-                            if (isDetectionPaused) {
-                                statusTextView.text = "⏸ DETECTION PAUSED"
-                                statusTextView.setTextColor(Color.parseColor("#FFD600"))
+                            if (navigationManager.isNavigating) {
+                                val isNearTurn = (navProgress?.distanceToNextStepMeters ?: 100f) <= 25f
+                                updateUiForState(if (isNearTurn) NavigationUiState.NAV_APPROACHING_TURN else NavigationUiState.NAV_PATH_CLEAR)
                             } else {
-                                statusTextView.text = "● PATH CLEAR  |  GUIDANCE ACTIVE"
-                                statusTextView.setTextColor(Color.parseColor("#00E676"))
-                            }
-                            if (currentNavState == NavState.IDLE) {
-                                mainGuidanceTextView.text = "Path clear. Continue straight."
-                                mainGuidanceTextView.setTextColor(Color.parseColor("#00E676"))
+                                updateUiForState(NavigationUiState.HOME)
+                                if (isDetectionPaused) {
+                                    statusTextView.text = "⏸ DETECTION PAUSED"
+                                    statusTextView.setTextColor(Color.parseColor("#FFD600"))
+                                } else {
+                                    statusTextView.text = "● PATH CLEAR  |  GUIDANCE ACTIVE"
+                                    statusTextView.setTextColor(Color.parseColor("#00E676"))
+                                }
+                                if (currentNavState == NavState.IDLE) {
+                                    mainGuidanceTextView.text = "Path clear. Continue straight."
+                                    mainGuidanceTextView.setTextColor(Color.parseColor("#00E676"))
+                                }
                             }
                         }
                     }
@@ -1539,6 +1989,14 @@ class MainActivity : AppCompatActivity() {
                     val speedStr = if (speedKmh > 1) " | $speedKmh km/h" else ""
                     locationTextView.text = "📍 $address$bearingStr$speedStr"
                     locationTextView.contentDescription = "Current location: $address. Tap to announce."
+
+                    // Check GPS accuracy: if loc.accuracy > 25m, trigger GPS_WEAK banner
+                    if (loc.hasAccuracy() && loc.accuracy > 25.0f) {
+                        systemBanner.visibility = View.VISIBLE
+                        systemBanner.text = "📡 GPS Signal Weak (±${loc.accuracy.toInt()}m). Estimating motion."
+                    } else if (systemBanner.visibility == View.VISIBLE && systemBanner.text.toString().contains("GPS")) {
+                        systemBanner.visibility = View.GONE
+                    }
 
                     // When navigating, keep user centered and orient map along user's bearing
                     if (currentNavState == NavState.NAVIGATING) {
@@ -1621,10 +2079,16 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onLongPress(e: MotionEvent) {
+                feedbackEngine.vibrateCaution()
                 voiceAssistant.startListening()
             }
         })
 
+        val touchListener = View.OnTouchListener { _, event ->
+            gestureDetector.onTouchEvent(event)
+        }
+
+        rootLayout.setOnTouchListener(touchListener)
         previewView.setOnTouchListener { _, event ->
             gestureDetector.onTouchEvent(event)
             true
@@ -1687,11 +2151,13 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
         mapView.onDestroy()
         fallDetector.stop()
+        if (::shakeDetector.isInitialized) shakeDetector.stop()
         if (::locationHelper.isInitialized) locationHelper.stopContinuousTracking()
         if (::cameraXManager.isInitialized) cameraXManager.shutdown()
         if (::objectDetector.isInitialized) objectDetector.close()
         if (::feedbackEngine.isInitialized) feedbackEngine.shutdown()
         if (::voiceAssistant.isInitialized) voiceAssistant.destroy()
         if (::environmentalAudioEngine.isInitialized) environmentalAudioEngine.stop()
+        if (::onlineOfflineManager.isInitialized) onlineOfflineManager.stopMonitoring()
     }
 }

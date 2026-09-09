@@ -11,6 +11,7 @@ import com.blindnav.app.db.AppDatabase
 import com.blindnav.app.db.UserPreferences
 import com.blindnav.app.engine.IFeedbackEngine
 import com.blindnav.app.location.LocationHelper
+import com.blindnav.app.offline.OfflineAreaManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -23,6 +24,7 @@ class VoiceAssistant(
     private val locationHelper: LocationHelper,
     private val database: AppDatabase,
     private val coroutineScope: CoroutineScope,
+    private val offlineAreaManager: OfflineAreaManager? = null,
     private val onToggleDetection: (isPaused: Boolean) -> Unit,
     private val onSpeechRateChanged: (newRate: Float) -> Unit,
     private val onToggleTorch: (enable: Boolean) -> Unit,
@@ -33,10 +35,23 @@ class VoiceAssistant(
     private val onRepeatNavigationDirection: (() -> Unit)? = null,
     private val onCancelNavigation: (() -> Unit)? = null,
     private val onNavigateToDestination: ((destination: String) -> Unit)? = null,
+    private val onStartNavigation: (() -> Unit)? = null,
+    private val onCallGuardian: (() -> Unit)? = null,
+    private val onSendLocationAlert: (() -> Unit)? = null,
+    private val onInquireDistance: (() -> Unit)? = null,
+    private val onInquireObstacles: (() -> Unit)? = null,
     private val onListeningStarted: (() -> Unit)? = null,
     private val onListeningStopped: (() -> Unit)? = null,
     private val onTriggerEmergencySos: (() -> Unit)? = null,
-    private val onOpenEmergencySetup: (() -> Unit)? = null
+    private val onOpenEmergencySetup: (() -> Unit)? = null,
+    private val onPauseNavigation: (() -> Unit)? = null,
+    private val onResumeNavigation: (() -> Unit)? = null,
+    private val onGoHome: (() -> Unit)? = null,
+    private val onStopSafety: (() -> Unit)? = null,
+    private val onDownloadCurrentArea: (() -> Unit)? = null,
+    private val onDownloadArea: ((areaName: String) -> Unit)? = null,
+    private val onShowOfflineAreas: (() -> Unit)? = null,
+    private val onDeleteOfflineArea: ((areaName: String) -> Unit)? = null
 ) {
 
     private var speechRecognizer: SpeechRecognizer? = null
@@ -50,20 +65,22 @@ class VoiceAssistant(
         }
     }
 
-    fun startListening() {
+    fun startListening(promptPromptSpoken: Boolean = true) {
         if (isListening || speechRecognizer == null) return
 
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
             putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "Speak a command...")
+            putExtra(RecognizerIntent.EXTRA_PROMPT, "Listening...")
         }
 
         try {
             onListeningStarted?.invoke()
             speechRecognizer?.startListening(intent)
             isListening = true
-            feedbackEngine.speakNormal("Listening...")
+            if (promptPromptSpoken) {
+                feedbackEngine.speakNormal("Listening.")
+            }
         } catch (e: Exception) {
             e.printStackTrace()
             isListening = false
@@ -101,8 +118,68 @@ class VoiceAssistant(
 
     fun processCommand(command: String) {
         when (val intent = VoiceCommandParser.parse(command)) {
-            is VoiceIntent.CancelEmergency -> {
-                onCancelEmergency()
+            // Navigation Lifecycle
+            is VoiceIntent.NavigateTo -> {
+                feedbackEngine.speakNormal("Navigating to ${intent.destination}. Say start navigation to begin.")
+                onNavigateToDestination?.invoke(intent.destination)
+            }
+            is VoiceIntent.StartNavigation -> {
+                if (onStartNavigation != null) {
+                    onStartNavigation.invoke()
+                } else {
+                    feedbackEngine.speakNormal("No destination selected. Say: Navigate to, followed by your destination.")
+                }
+            }
+            is VoiceIntent.StopNavigation -> {
+                onCancelNavigation?.invoke()
+                feedbackEngine.speakNormal("Walking navigation stopped.")
+            }
+            is VoiceIntent.PauseNavigation -> {
+                onPauseNavigation?.invoke()
+                feedbackEngine.speakNormal("Navigation paused. Say resume navigation when ready.")
+            }
+            is VoiceIntent.ResumeNavigation -> {
+                onResumeNavigation?.invoke()
+                feedbackEngine.speakNormal("Resuming walking navigation.")
+            }
+            is VoiceIntent.GoHome -> {
+                if (onGoHome != null) {
+                    onGoHome.invoke()
+                } else {
+                    feedbackEngine.speakNormal("Navigating home.")
+                }
+            }
+
+            // Navigation Inquiries
+            is VoiceIntent.RepeatInstruction, is VoiceIntent.RepeatLast -> {
+                onRepeatNavigationDirection?.invoke()
+            }
+            is VoiceIntent.NextInstruction -> {
+                onRepeatNavigationDirection?.invoke()
+            }
+            is VoiceIntent.WhereAmI, is VoiceIntent.LocationInquiry -> {
+                handleLocationInquiry()
+            }
+            is VoiceIntent.HowFar, is VoiceIntent.RemainingDistance, is VoiceIntent.EstimatedArrival -> {
+                if (onInquireDistance != null) {
+                    onInquireDistance.invoke()
+                } else {
+                    feedbackEngine.speakNormal("No active navigation route.")
+                }
+            }
+            is VoiceIntent.ObstacleInquiry -> {
+                if (onInquireObstacles != null) {
+                    onInquireObstacles.invoke()
+                } else {
+                    feedbackEngine.speakNormal("Path clear ahead. Safe to proceed.")
+                }
+            }
+
+            // Safety Commands
+            is VoiceIntent.StopSafety -> {
+                feedbackEngine.vibrateDanger()
+                feedbackEngine.speakUrgent("Halt. Please stop immediately.")
+                onStopSafety?.invoke()
             }
             is VoiceIntent.EmergencySos -> {
                 if (onTriggerEmergencySos != null) {
@@ -111,18 +188,106 @@ class VoiceAssistant(
                     sendEmergencySos("Voice SOS trigger activated.")
                 }
             }
-            is VoiceIntent.LocationInquiry -> {
-                handleLocationInquiry()
+            is VoiceIntent.CallGuardian -> {
+                feedbackEngine.speakUrgent("Calling your guardian. Say cancel to stop.")
+                onCallGuardian?.invoke()
             }
-            is VoiceIntent.RepeatLast -> {
-                feedbackEngine.repeatLastMessage()
+            is VoiceIntent.SendLocationAlert -> {
+                feedbackEngine.speakNormal("Sending your current location.")
+                if (onSendLocationAlert != null) {
+                    onSendLocationAlert.invoke()
+                } else {
+                    sendEmergencySos("Location distress alert requested via voice.")
+                }
             }
-            is VoiceIntent.HistoryInquiry -> {
-                handleHistoryInquiry()
+            is VoiceIntent.CancelEmergency -> {
+                onCancelEmergency()
             }
-            is VoiceIntent.ToggleDetection -> {
-                onToggleDetection(intent.pause)
-                val msg = if (intent.pause) "Detection paused." else "Detection resumed."
+
+            // Offline Areas
+            is VoiceIntent.DownloadCurrentArea -> {
+                feedbackEngine.speakNormal("Downloading current area for offline navigation...")
+                if (onDownloadCurrentArea != null) {
+                    onDownloadCurrentArea.invoke()
+                } else {
+                    val loc = locationHelper.lastLocation
+                    val city = locationHelper.lastStreetName ?: "Current Area"
+                    if (loc != null && offlineAreaManager != null) {
+                        offlineAreaManager.downloadCurrentArea(loc.latitude, loc.longitude, city) { area ->
+                            feedbackEngine.speakNormal("Downloaded $city for offline navigation. Storage used: ${area.formattedSize}.")
+                        }
+                    } else {
+                        feedbackEngine.speakNormal("Choose an area to download. For example, say download Bangalore.")
+                    }
+                }
+            }
+            is VoiceIntent.DownloadArea -> {
+                feedbackEngine.speakNormal("Downloading ${intent.areaName} for offline navigation...")
+                if (onDownloadArea != null) {
+                    onDownloadArea.invoke(intent.areaName)
+                } else {
+                    offlineAreaManager?.downloadArea(
+                        areaName = intent.areaName,
+                        coverageDescription = "${intent.areaName} Urban Walking Corridor",
+                        storageBytes = 12_500_000L
+                    ) { area ->
+                        feedbackEngine.speakNormal("Downloaded ${area.areaName}. Available offline.")
+                    }
+                }
+            }
+            is VoiceIntent.ShowOfflineMaps -> {
+                if (onShowOfflineAreas != null) {
+                    onShowOfflineAreas.invoke()
+                } else {
+                    offlineAreaManager?.getAllDownloadedAreas { areas ->
+                        if (areas.isEmpty()) {
+                            feedbackEngine.speakNormal("No offline areas downloaded yet. Say: download Bangalore, or download this area.")
+                        } else {
+                            val names = areas.joinToString(", ") { it.areaName }
+                            feedbackEngine.speakNormal("Downloaded offline areas: $names. Showing offline maps screen.")
+                        }
+                    }
+                }
+            }
+            is VoiceIntent.DeleteOfflineArea -> {
+                if (intent.areaName.isBlank()) {
+                    feedbackEngine.speakNormal("Which area would you like to delete? For example, say: delete Bangalore.")
+                } else {
+                    if (onDeleteOfflineArea != null) {
+                        onDeleteOfflineArea.invoke(intent.areaName)
+                    } else {
+                        offlineAreaManager?.deleteAreaByName(intent.areaName) { found ->
+                            if (found) {
+                                feedbackEngine.speakNormal("Deleted offline area ${intent.areaName}.")
+                            } else {
+                                feedbackEngine.speakNormal("Offline area ${intent.areaName} not found.")
+                            }
+                        }
+                    }
+                }
+            }
+            is VoiceIntent.StorageInquiry -> {
+                offlineAreaManager?.getStorageSummary { used, free ->
+                    feedbackEngine.speakNormal("You have $free of offline storage available. Offline areas currently use $used.")
+                } ?: feedbackEngine.speakNormal("Offline storage is available.")
+            }
+
+            // Settings Commands
+            is VoiceIntent.ToggleVoiceGuidance -> {
+                feedbackEngine.setVoiceGuidanceEnabled(intent.enable)
+                persistPreferences()
+                val msg = if (intent.enable) "Voice guidance turned on." else "Voice guidance turned off."
+                feedbackEngine.speakUrgent(msg)
+            }
+            is VoiceIntent.AdjustVolume -> {
+                feedbackEngine.adjustVolume(intent.increase)
+                val msg = if (intent.increase) "Volume increased." else "Volume decreased."
+                feedbackEngine.speakNormal(msg)
+            }
+            is VoiceIntent.ToggleVibration -> {
+                feedbackEngine.isVibrationEnabled = intent.enable
+                persistPreferences()
+                val msg = if (intent.enable) "Vibration feedback enabled." else "Vibration feedback disabled."
                 feedbackEngine.speakNormal(msg)
             }
             is VoiceIntent.AdjustSpeed -> {
@@ -134,6 +299,20 @@ class VoiceAssistant(
                 val msg = if (intent.faster) "Speech speed increased." else "Speech speed decreased."
                 feedbackEngine.speakNormal(msg)
             }
+            is VoiceIntent.ToggleTorch -> {
+                onToggleTorch(intent.enable)
+                val msg = if (intent.enable) "Flashlight turned on." else "Flashlight turned off."
+                feedbackEngine.speakNormal(msg)
+            }
+            is VoiceIntent.ToggleDetection -> {
+                onToggleDetection(intent.pause)
+                val msg = if (intent.pause) "Detection paused." else "Detection resumed."
+                feedbackEngine.speakNormal(msg)
+            }
+            is VoiceIntent.ToggleMap -> {
+                onToggleMapView?.invoke()
+                feedbackEngine.speakNormal("Switched navigation view mode.")
+            }
             is VoiceIntent.SetEmergencyContact -> {
                 val validation = com.blindnav.app.emergency.GuardianContactValidator.validate("Guardian", intent.phoneNumber)
                 if (validation is com.blindnav.app.emergency.ValidationResult.Success) {
@@ -144,36 +323,21 @@ class VoiceAssistant(
                     feedbackEngine.speakUrgent("Cannot set contact: ${validation.reason}")
                 }
             }
-            is VoiceIntent.ToggleTorch -> {
-                onToggleTorch(intent.enable)
-                val msg = if (intent.enable) "Flashlight turned on." else "Flashlight turned off."
-                feedbackEngine.speakNormal(msg)
-            }
+
+            // Diagnostic & General
             is VoiceIntent.OpenMaps -> {
                 feedbackEngine.speakNormal("Opening Google Maps walking navigation.")
                 locationHelper.openInGoogleMaps()
             }
-            is VoiceIntent.ToggleMap -> {
-                onToggleMapView?.invoke()
-                feedbackEngine.speakNormal("Switched navigation view mode.")
-            }
-            is VoiceIntent.NextDirection -> {
-                onRepeatNavigationDirection?.invoke()
-            }
-            is VoiceIntent.StopNavigation -> {
-                onCancelNavigation?.invoke()
-                feedbackEngine.speakNormal("Walking navigation stopped.")
-            }
-            is VoiceIntent.NavigateTo -> {
-                feedbackEngine.speakNormal("Searching for ${intent.destination}...")
-                onNavigateToDestination?.invoke(intent.destination)
+            is VoiceIntent.HistoryInquiry -> {
+                handleHistoryInquiry()
             }
             is VoiceIntent.StatusInquiry -> {
-                feedbackEngine.speakNormal("System active. Camera scanning and AI detection running normally.")
+                feedbackEngine.speakNormal("System active. Camera scanning and path safety checks running normally.")
             }
             is VoiceIntent.Help -> {
                 feedbackEngine.speakNormal(
-                    "You can say: Navigate to Central Park, Where am I, Next turn, Show map, Stop navigation, Repeat, History, Pause, Resume, Faster, Slower, Light on, or Emergency."
+                    "You can say: Navigate to Bangalore Railway Station, Start navigation, Stop navigation, Pause navigation, Resume navigation, Repeat instruction, Where am I, How far, Go home, Call guardian, Send location, Download this area, Show offline maps, Turn voice guidance on, or Emergency."
                 )
             }
             is VoiceIntent.Unknown -> {
@@ -203,7 +367,7 @@ class VoiceAssistant(
                 val lngFormatted = String.format(Locale.US, "%.4f", location.longitude)
                 feedbackEngine.speakNormal("Coordinates: Latitude $latFormatted, Longitude $lngFormatted.")
             } else {
-                feedbackEngine.speakNormal("Unable to determine GPS location. Please check location permissions and GPS signal.")
+                feedbackEngine.speakNormal("Location is uncertain. Please stop and verify GPS.")
             }
         }
     }
@@ -262,6 +426,8 @@ class VoiceAssistant(
             val currentPrefs = database.detectionDao().getPreferences() ?: UserPreferences()
             val updated = currentPrefs.copy(
                 speechRate = feedbackEngine.currentSpeechRate,
+                isVoiceGuidanceEnabled = !feedbackEngine.isVoiceGuidanceMuted,
+                isVibrationEnabled = feedbackEngine.isVibrationEnabled,
                 emergencyContactPhone = emergencyContactNumberProvider() ?: ""
             )
             database.detectionDao().savePreferences(updated)

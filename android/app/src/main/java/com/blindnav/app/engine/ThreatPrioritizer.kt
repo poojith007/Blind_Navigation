@@ -12,13 +12,24 @@ data class GuidanceDecision(
     val visualHeadline: String,
     val isObstaclePresent: Boolean,
     val targetObject: DetectedObject? = null,
-    val audioEvidence: AudioEvidence? = null
+    val audioEvidence: AudioEvidence? = null,
+    val isPathUnclear: Boolean = false
 )
 
 /**
  * Multi-Sensor Path Guidance & Decision Engine.
  * Fuses visual detections, walking corridor geometry, environmental acoustic evidence,
  * and GPS navigation to provide calm, actionable path instructions.
+ *
+ * Implements context-aware obstacle guidance:
+ * 1. What object was detected?
+ * 2. How far away is it?
+ * 3. Where is it relative to the user?
+ * 4. Is it actually inside the walking corridor?
+ * 5. Is it stationary or potentially moving?
+ * 6. Does it affect the user's route?
+ * 7. Is there a safer direction?
+ * 8. How urgent is the situation?
  */
 class ThreatPrioritizer(
     private val feedbackEngine: IFeedbackEngine,
@@ -29,6 +40,8 @@ class ThreatPrioritizer(
 
     private val lastAlertTimestamps = mutableMapOf<String, Long>()
     private val lastAlertDistances = mutableMapOf<String, Float>()
+    private val lastAlertThreatLevels = mutableMapOf<String, ThreatLevel>()
+    private val lastAlertInstructions = mutableMapOf<String, String>()
     private var lastClearPathAnnouncementTime = 0L
     private var wasObstacleRecentlyActive = false
 
@@ -39,46 +52,60 @@ class ThreatPrioritizer(
      * Backward-compatible entrypoint returning the guidance decision.
      */
     fun processFrameDetections(detections: List<DetectedObject>): GuidanceDecision? {
-        return processFrameDetections(detections, null, null, true)
+        return processFrameDetections(detections, null, null, true, false)
     }
 
     /**
      * Full multi-sensor evaluation combining camera vision, walking corridor,
-     * environmental audio evidence, and navigation progress.
+     * environmental audio evidence, navigation progress, and safe failure guards.
      */
     fun processFrameDetections(
         detections: List<DetectedObject>,
         audioEvidence: AudioEvidence? = null,
         navProgress: NavProgress? = null,
-        isUserMoving: Boolean = true
+        isUserMoving: Boolean = true,
+        isPerceptionDegraded: Boolean = false
     ): GuidanceDecision? {
         val now = System.currentTimeMillis()
 
-        // If user is standing completely still and no moving hazards, suppress low-urgency alerts
+        // 10. SAFE FAILURE MODE: Never communicate "PATH CLEAR" if perception is degraded
+        if (isPerceptionDegraded) {
+            val decision = GuidanceDecision(
+                priority = SpeechPriority.SAFETY_WARNING,
+                instruction = "Path unclear. Please stop.",
+                visualHeadline = "PATH UNCLEAR",
+                isObstaclePresent = false,
+                isPathUnclear = true
+            )
+            latestDecision = decision
+            if (now - (lastAlertTimestamps["SAFE_FAILURE"] ?: 0L) > 8000L) {
+                lastAlertTimestamps["SAFE_FAILURE"] = now
+                dispatchFeedback(decision)
+            }
+            return decision
+        }
+
         val isStationary = !isUserMoving
 
-        // 1. Evaluate Environmental Audio Events (horns, sirens)
+        // 1. Evaluate Environmental Audio Events (horns, sirens, bells)
         val isAcousticHorn = audioEvidence?.type == AudioEventType.VEHICLE_HORN && audioEvidence.isRecent()
         val isAcousticSiren = audioEvidence?.type == AudioEventType.SIREN && audioEvidence.isRecent()
         val isAcousticBell = audioEvidence?.type == AudioEventType.BICYCLE_BELL && audioEvidence.isRecent()
 
-        // 2. Filter detections relevant to the walking corridor or high-speed hazards
-        // Objects far outside the corridor (e.g. far left chair at 3.5m) are filtered out
+        // 2. Filter detections relevant to walking corridor or high-speed hazards
         val relevantDetections = detections.filter { obj ->
             val isVehicleOrHazard = obj.label.lowercase() in listOf("car", "bus", "truck", "motorcycle", "bicycle")
-            // In walking corridor, OR close vehicle approaching from sides
             obj.isInCorridor || (isVehicleOrHazard && obj.distanceMeters <= 3.5f) || (obj.threatLevel == ThreatLevel.DANGER)
         }
 
-        // 3. If no relevant obstacles are detected
+        // 3. Normal state: PATH CLEAR
         if (relevantDetections.isEmpty()) {
-            // Check if siren is blaring nearby without visual lock
             if (isAcousticSiren && (now - (lastAlertTimestamps["SIREN_EVENT"] ?: 0L)) > 10000L) {
                 lastAlertTimestamps["SIREN_EVENT"] = now
                 val decision = GuidanceDecision(
                     priority = SpeechPriority.SAFETY_WARNING,
                     instruction = "Emergency siren detected nearby. Exercise caution.",
-                    visualHeadline = "🚨 SIREN DETECTED NEARBY",
+                    visualHeadline = "SIREN DETECTED NEARBY",
                     isObstaclePresent = false,
                     audioEvidence = audioEvidence
                 )
@@ -87,16 +114,16 @@ class ThreatPrioritizer(
                 return decision
             }
 
-            // Path is clear! If user was previously avoiding an obstacle, provide reassurance
-            if (wasObstacleRecentlyActive && (now - lastClearPathAnnouncementTime) > 6000L) {
+            // Normal state: If an obstacle was active and now cleared, reassure user
+            if (wasObstacleRecentlyActive && (now - lastClearPathAnnouncementTime) > 7000L) {
                 wasObstacleRecentlyActive = false
                 lastClearPathAnnouncementTime = now
                 val navActive = navProgress?.nextStep != null && !navProgress.isArrived
-                val clearText = if (navActive) "Path clear. Continue following directions." else "Path clear. Continue straight."
+                val clearText = if (navActive) "Path clear. Continue straight." else "Continue straight."
                 val decision = GuidanceDecision(
                     priority = SpeechPriority.INFORMATION,
                     instruction = clearText,
-                    visualHeadline = "● PATH CLEAR",
+                    visualHeadline = "PATH CLEAR",
                     isObstaclePresent = false
                 )
                 latestDecision = decision
@@ -107,7 +134,7 @@ class ThreatPrioritizer(
             val idleDecision = GuidanceDecision(
                 priority = SpeechPriority.INFORMATION,
                 instruction = "",
-                visualHeadline = "● PATH CLEAR",
+                visualHeadline = "PATH CLEAR",
                 isObstaclePresent = false
             )
             latestDecision = idleDecision
@@ -123,7 +150,6 @@ class ThreatPrioritizer(
         var topThreat = sortedDetections.first()
 
         // 5. Multi-Sensor Fusion: Correlate acoustic evidence with visual detection
-        // If vehicle detected on side AND vehicle horn/rumble heard -> escalate to immediate DANGER!
         val isVehicleType = topThreat.label.lowercase() in listOf("car", "bus", "truck", "motorcycle")
         if (isVehicleType && (isAcousticHorn || audioEvidence?.type == AudioEventType.ENGINE_RUMBLE)) {
             topThreat = topThreat.copy(threatLevel = ThreatLevel.DANGER)
@@ -133,7 +159,7 @@ class ThreatPrioritizer(
 
         wasObstacleRecentlyActive = true
 
-        // 6. Determine Evasive Maneuver & Actionable Guidance
+        // 6 & 7. Determine Evasive Maneuver & Actionable Guidance
         val evasiveDir = DistanceEstimator.determineEvasiveDirection(relevantDetections)
         val instructionText = topThreat.toActionableInstruction(evasiveDir)
 
@@ -141,10 +167,9 @@ class ThreatPrioritizer(
         val priority = if (isUrgent) SpeechPriority.EMERGENCY else SpeechPriority.SAFETY_WARNING
 
         val headline = if (isUrgent) {
-            "🛑 STOP - OBSTACLE AHEAD"
+            "STOP. IMMEDIATE OBSTACLE"
         } else {
-            val dirWord = if (evasiveDir == Position.LEFT) "MOVE LEFT" else "MOVE RIGHT"
-            "⚠️ OBSTACLE AHEAD - $dirWord"
+            "CAUTION. OBSTACLE AHEAD"
         }
 
         val decision = GuidanceDecision(
@@ -157,27 +182,37 @@ class ThreatPrioritizer(
         )
         latestDecision = decision
 
-        // 7. Instant spatial audio cue for reactive directional awareness
+        // Spatial audio cue for reactive directional awareness
         spatialSoundEngine?.playSpatialCue(
             position = topThreat.position,
             threatLevel = topThreat.threatLevel,
             distanceMeters = topThreat.distanceMeters
         )
 
-        // 8. Cooldown and Escalation Check
+        // 8. Cooldown / Deduplication Rules:
+        // Only repeat an alert when:
+        // - the threat level increases
+        // - the object moves significantly closer (by >= 0.7m)
+        // - the recommended action changes
+        // - the previous warning has expired
         val objectKey = "${topThreat.label}_${topThreat.position}"
         val lastTimestamp = lastAlertTimestamps[objectKey] ?: 0L
         val prevDistance = lastAlertDistances[objectKey] ?: Float.MAX_VALUE
+        val prevThreatLevel = lastAlertThreatLevels[objectKey] ?: ThreatLevel.SAFE
+        val prevInstruction = lastAlertInstructions[objectKey] ?: ""
         val timeSinceLastAlert = now - lastTimestamp
 
-        // Escalation: if obstacle moved significantly closer (drops by >= 0.7m and <= 1.5m), escalate immediately!
-        val isEscalated = (prevDistance - topThreat.distanceMeters) >= 0.7f && topThreat.distanceMeters <= 1.5f
+        val threatLevelIncreased = topThreat.threatLevel.ordinal > prevThreatLevel.ordinal
+        val movedSignificantlyCloser = (prevDistance - topThreat.distanceMeters) >= 0.7f && topThreat.distanceMeters <= 2.5f
+        val actionChanged = prevInstruction.isNotBlank() && prevInstruction != instructionText
         val requiredCooldown = if (isUrgent) urgentAlertCooldownMs else (if (isStationary) alertCooldownMs * 2 else alertCooldownMs)
-        val isCooldownPassed = timeSinceLastAlert > requiredCooldown
+        val warningExpired = timeSinceLastAlert > requiredCooldown
 
-        if (isCooldownPassed || isEscalated) {
+        if (warningExpired || threatLevelIncreased || movedSignificantlyCloser || actionChanged) {
             lastAlertTimestamps[objectKey] = now
             lastAlertDistances[objectKey] = topThreat.distanceMeters
+            lastAlertThreatLevels[objectKey] = topThreat.threatLevel
+            lastAlertInstructions[objectKey] = instructionText
             dispatchFeedback(decision)
         }
 
@@ -199,6 +234,8 @@ class ThreatPrioritizer(
     fun clearHistory() {
         lastAlertTimestamps.clear()
         lastAlertDistances.clear()
+        lastAlertThreatLevels.clear()
+        lastAlertInstructions.clear()
         wasObstacleRecentlyActive = false
         latestDecision = null
     }

@@ -92,6 +92,96 @@ class VoiceCommandParserTest {
     }
 
     @Test
+    fun testStartNavigationCommands() {
+        assertEquals(VoiceIntent.StartNavigation, VoiceCommandParser.parse("start"))
+        assertEquals(VoiceIntent.StartNavigation, VoiceCommandParser.parse("start navigation"))
+        assertEquals(VoiceIntent.StartNavigation, VoiceCommandParser.parse("begin"))
+        assertEquals(VoiceIntent.StartNavigation, VoiceCommandParser.parse("go"))
+        assertEquals(VoiceIntent.StartNavigation, VoiceCommandParser.parse("let's go"))
+        assertEquals(VoiceIntent.StartNavigation, VoiceCommandParser.parse("yes"))
+    }
+
+    @Test
+    fun testStopNavigationCommands() {
+        assertEquals(VoiceIntent.StopNavigation, VoiceCommandParser.parse("stop navigation"))
+        assertEquals(VoiceIntent.StopNavigation, VoiceCommandParser.parse("cancel navigation"))
+        assertEquals(VoiceIntent.StopNavigation, VoiceCommandParser.parse("end route"))
+    }
+
+    @Test
+    fun testCallGuardianCommands() {
+        assertEquals(VoiceIntent.CallGuardian, VoiceCommandParser.parse("call guardian"))
+        assertEquals(VoiceIntent.CallGuardian, VoiceCommandParser.parse("call helper"))
+        assertEquals(VoiceIntent.CallGuardian, VoiceCommandParser.parse("call"))
+    }
+
+    @Test
+    fun testSendLocationAlertCommands() {
+        assertEquals(VoiceIntent.SendLocationAlert, VoiceCommandParser.parse("send location"))
+        assertEquals(VoiceIntent.SendLocationAlert, VoiceCommandParser.parse("text location"))
+        assertEquals(VoiceIntent.SendLocationAlert, VoiceCommandParser.parse("share location"))
+    }
+
+    @Test
+    fun testRemainingDistanceAndObstacleInquiry() {
+        assertEquals(VoiceIntent.RemainingDistance, VoiceCommandParser.parse("how far"))
+        assertEquals(VoiceIntent.RemainingDistance, VoiceCommandParser.parse("remaining distance"))
+        assertEquals(VoiceIntent.RemainingDistance, VoiceCommandParser.parse("how long / eta"))
+
+        assertEquals(VoiceIntent.ObstacleInquiry, VoiceCommandParser.parse("is path clear"))
+        assertEquals(VoiceIntent.ObstacleInquiry, VoiceCommandParser.parse("check path"))
+        assertEquals(VoiceIntent.ObstacleInquiry, VoiceCommandParser.parse("what's ahead"))
+    }
+
+    @Test
+    fun testOfflineAreaCommands() {
+        assertEquals(VoiceIntent.DownloadCurrentArea, VoiceCommandParser.parse("download this area"))
+        assertEquals(VoiceIntent.DownloadCurrentArea, VoiceCommandParser.parse("download this area for offline navigation"))
+        assertEquals(VoiceIntent.DownloadCurrentArea, VoiceCommandParser.parse("save current area"))
+
+        val dlBangalore = VoiceCommandParser.parse("download area Bangalore")
+        assertTrue(dlBangalore is VoiceIntent.DownloadArea && dlBangalore.areaName.equals("Bangalore", ignoreCase = true))
+
+        val dlMysore = VoiceCommandParser.parse("download Mysore")
+        assertTrue(dlMysore is VoiceIntent.DownloadArea && dlMysore.areaName.equals("Mysore", ignoreCase = true))
+
+        assertEquals(VoiceIntent.ShowOfflineMaps, VoiceCommandParser.parse("show offline maps"))
+        assertEquals(VoiceIntent.ShowOfflineMaps, VoiceCommandParser.parse("offline areas"))
+
+        val delBangalore = VoiceCommandParser.parse("delete area Bangalore")
+        assertTrue(delBangalore is VoiceIntent.DeleteOfflineArea && delBangalore.areaName.equals("Bangalore", ignoreCase = true))
+
+        assertEquals(VoiceIntent.StorageInquiry, VoiceCommandParser.parse("how much offline storage is available"))
+    }
+
+    @Test
+    fun testNavigationControlCommands() {
+        assertEquals(VoiceIntent.PauseNavigation, VoiceCommandParser.parse("pause navigation"))
+        assertEquals(VoiceIntent.PauseNavigation, VoiceCommandParser.parse("hold navigation"))
+
+        assertEquals(VoiceIntent.ResumeNavigation, VoiceCommandParser.parse("resume navigation"))
+        assertEquals(VoiceIntent.ResumeNavigation, VoiceCommandParser.parse("continue navigation"))
+
+        assertEquals(VoiceIntent.GoHome, VoiceCommandParser.parse("go home"))
+        assertEquals(VoiceIntent.GoHome, VoiceCommandParser.parse("take me home"))
+    }
+
+    @Test
+    fun testVoiceGuidanceAndVibrationSettings() {
+        val muteVoice = VoiceCommandParser.parse("turn voice guidance off")
+        assertTrue(muteVoice is VoiceIntent.ToggleVoiceGuidance && !muteVoice.enable)
+
+        val unmuteVoice = VoiceCommandParser.parse("unmute voice")
+        assertTrue(unmuteVoice is VoiceIntent.ToggleVoiceGuidance && unmuteVoice.enable)
+
+        val disableVibe = VoiceCommandParser.parse("turn off vibration")
+        assertTrue(disableVibe is VoiceIntent.ToggleVibration && !disableVibe.enable)
+
+        val enableVibe = VoiceCommandParser.parse("enable vibration")
+        assertTrue(enableVibe is VoiceIntent.ToggleVibration && enableVibe.enable)
+    }
+
+    @Test
     fun testUnknownCommand() {
         val unknown = VoiceCommandParser.parse("play music on spotify")
         assertTrue(unknown is VoiceIntent.Unknown)
