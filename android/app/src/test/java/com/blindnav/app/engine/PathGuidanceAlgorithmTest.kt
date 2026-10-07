@@ -19,6 +19,8 @@ class PathGuidanceAlgorithmTest {
         override var lastSpokenMessage: String = ""
         override var isVoiceGuidanceMuted: Boolean = false
         override var isVibrationEnabled: Boolean = true
+        override val isSpeaking: Boolean = false
+        override var onSpeakingStateChanged: ((isSpeaking: Boolean) -> Unit)? = null
 
         val spokenMessages = mutableListOf<Pair<String, SpeechPriority>>()
         var dangerVibrations = 0

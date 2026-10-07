@@ -13,6 +13,8 @@ interface IFeedbackEngine {
     val currentPriority: SpeechPriority?
     var isVoiceGuidanceMuted: Boolean
     var isVibrationEnabled: Boolean
+    val isSpeaking: Boolean
+    var onSpeakingStateChanged: ((isSpeaking: Boolean) -> Unit)?
 
     fun setSpeechRate(rate: Float)
     fun setVoiceGuidanceEnabled(enable: Boolean)

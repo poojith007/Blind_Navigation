@@ -140,17 +140,33 @@ class ObjectDetector(
 
     fun isModelReady(): Boolean = ortSession != null || tfliteInterpreter != null
 
+    @Volatile
+    var lastInferenceMs: Long = 0L
+        private set
+
     fun detect(bitmap: Bitmap): List<DetectedObject> {
-        return when {
+        val start = android.os.SystemClock.elapsedRealtime()
+        val result = when {
             ortSession != null -> detectWithOnnx(bitmap)
             tfliteInterpreter != null -> detectWithTflite(bitmap)
             else -> emptyList()
         }
+        lastInferenceMs = android.os.SystemClock.elapsedRealtime() - start
+        return result
     }
 
     private val area = inputTensorWidth * inputTensorHeight
     private val reusableIntValues = IntArray(area)
     private val reusableFloatBuffer: FloatBuffer = FloatBuffer.allocate(1 * 3 * area)
+
+    // Reused across every frame for the TFLite path so we're not allocating a fresh
+    // ~5MB input buffer and ~2.8MB output array on every single camera frame — that
+    // allocation churn was adding avoidable GC pauses directly in the detection loop.
+    private val tfliteInputBuffer: ByteBuffer = ByteBuffer.allocateDirect(4 * area * 3).apply {
+        order(ByteOrder.nativeOrder())
+    }
+    private val tfliteOutputBuffer = Array(1) { Array(84) { FloatArray(8400) } }
+    private val tfliteIntValues = IntArray(area)
 
     // ==========================================
     // ONNX Inference Implementation
@@ -198,13 +214,21 @@ class ObjectDetector(
             val inputName = session.inputNames.iterator().next()
             results = session.run(Collections.singletonMap(inputName, inputTensor))
 
-            val outputRaw = results[0].value
-            val outputMatrix = extractOutputMatrix(outputRaw, results[0] as? OnnxTensor)
-
-            if (outputMatrix != null) {
-                parseYoloOutput(outputMatrix)
+            val outTensor = results[0] as? OnnxTensor
+            val shape = outTensor?.info?.shape
+            if (outTensor != null && shape != null && shape.size == 3 && shape[1] < shape[2]) {
+                // Fast path: one bulk copy into a reused flat array (no per-frame nested arrays).
+                val channels = shape[1].toInt()
+                val anchors = shape[2].toInt()
+                if (flatOutput.size != channels * anchors) flatOutput = FloatArray(channels * anchors)
+                val fb = outTensor.floatBuffer
+                fb.rewind()
+                fb.get(flatOutput)
+                parseYoloFlat(flatOutput, channels, anchors)
             } else {
-                emptyList()
+                val outputRaw = results[0].value
+                val outputMatrix = extractOutputMatrix(outputRaw, outTensor)
+                if (outputMatrix != null) parseYoloOutput(outputMatrix) else emptyList()
             }
         } catch (e: Exception) {
             Log.e(tag, "ONNX inference error: ${e.message}", e)
@@ -246,29 +270,28 @@ class ObjectDetector(
     // ==========================================
     // TFLite Inference Implementation
     // ==========================================
+    @Synchronized
     private fun detectWithTflite(bitmap: Bitmap): List<DetectedObject> {
         val tflite = tfliteInterpreter ?: return emptyList()
 
         val resizedBitmap = Bitmap.createScaledBitmap(bitmap, inputTensorWidth, inputTensorHeight, true)
-        val inputBuffer = convertBitmapToByteBuffer(resizedBitmap)
-
-        // YOLO11 output tensor shape: [1, 84, 8400]
-        val outputBuffer = Array(1) { Array(84) { FloatArray(8400) } }
+        convertBitmapToByteBuffer(resizedBitmap, tfliteInputBuffer, tfliteIntValues)
+        if (resizedBitmap != bitmap) {
+            resizedBitmap.recycle()
+        }
 
         return try {
-            tflite.run(inputBuffer, outputBuffer)
-            parseYoloOutput(outputBuffer[0])
+            // YOLO11 output tensor shape: [1, 84, 8400]
+            tflite.run(tfliteInputBuffer, tfliteOutputBuffer)
+            parseYoloOutput(tfliteOutputBuffer[0])
         } catch (e: Exception) {
             Log.e(tag, "TFLite inference error: ${e.message}", e)
             emptyList()
         }
     }
 
-    private fun convertBitmapToByteBuffer(bitmap: Bitmap): ByteBuffer {
-        val byteBuffer = ByteBuffer.allocateDirect(4 * inputTensorWidth * inputTensorHeight * 3)
-        byteBuffer.order(ByteOrder.nativeOrder())
-
-        val intValues = IntArray(inputTensorWidth * inputTensorHeight)
+    private fun convertBitmapToByteBuffer(bitmap: Bitmap, byteBuffer: ByteBuffer, intValues: IntArray) {
+        byteBuffer.rewind()
         bitmap.getPixels(intValues, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
 
         var pixelIndex = 0
@@ -280,7 +303,70 @@ class ObjectDetector(
                 byteBuffer.putFloat(((value and 0xFF) / 255.0f))
             }
         }
-        return byteBuffer
+    }
+
+    // ==========================================
+    // Fast flat-array YOLO parsing (ONNX path)
+    // ==========================================
+    private var flatOutput = FloatArray(0)
+    private var maxScores = FloatArray(0)
+    private var maxClasses = IntArray(0)
+
+    private fun parseYoloFlat(out: FloatArray, channels: Int, anchors: Int): List<DetectedObject> {
+        if (maxScores.size != anchors) {
+            maxScores = FloatArray(anchors)
+            maxClasses = IntArray(anchors)
+        }
+        java.util.Arrays.fill(maxScores, 0f)
+        java.util.Arrays.fill(maxClasses, -1)
+
+        // Class-outer / anchor-inner keeps memory access sequential (the old
+        // anchor-outer loop jumped across 80 separate arrays for every anchor).
+        for (c in 4 until channels) {
+            val base = c * anchors
+            val cls = c - 4
+            for (a in 0 until anchors) {
+                val s = out[base + a]
+                if (s > maxScores[a]) {
+                    maxScores[a] = s
+                    maxClasses[a] = cls
+                }
+            }
+        }
+
+        val candidates = mutableListOf<DetectedObject>()
+        for (a in 0 until anchors) {
+            val score = maxScores[a]
+            val classId = maxClasses[a]
+            if (score < confidenceThreshold || classId !in labels.indices) continue
+
+            val cx = out[a] / inputTensorWidth
+            val cy = out[anchors + a] / inputTensorHeight
+            val w = out[2 * anchors + a] / inputTensorWidth
+            val h = out[3 * anchors + a] / inputTensorHeight
+
+            val rect = RectF(
+                (cx - w / 2.0f).coerceIn(0.0f, 1.0f),
+                (cy - h / 2.0f).coerceIn(0.0f, 1.0f),
+                (cx + w / 2.0f).coerceIn(0.0f, 1.0f),
+                (cy + h / 2.0f).coerceIn(0.0f, 1.0f)
+            )
+            val label = labels[classId]
+            val distance = DistanceEstimator.estimateDistance(label, rect)
+            candidates.add(
+                DetectedObject(
+                    classId = classId,
+                    label = label,
+                    confidence = score,
+                    boundingBox = rect,
+                    distanceMeters = distance,
+                    position = DistanceEstimator.determinePosition(rect),
+                    threatLevel = DistanceEstimator.determineThreatLevel(distance, label),
+                    isInCorridor = DistanceEstimator.isInWalkingCorridor(rect, distance)
+                )
+            )
+        }
+        return applyNms(candidates)
     }
 
     // ==========================================

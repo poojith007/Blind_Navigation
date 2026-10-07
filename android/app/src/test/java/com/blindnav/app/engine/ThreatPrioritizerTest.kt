@@ -17,6 +17,8 @@ class ThreatPrioritizerTest {
         override var currentPriority: SpeechPriority? = null
         override var isVoiceGuidanceMuted: Boolean = false
         override var isVibrationEnabled: Boolean = true
+        override val isSpeaking: Boolean = false
+        override var onSpeakingStateChanged: ((isSpeaking: Boolean) -> Unit)? = null
         val urgentSpoken = mutableListOf<String>()
         val normalSpoken = mutableListOf<String>()
         var dangerVibrations = 0

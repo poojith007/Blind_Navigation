@@ -4,12 +4,22 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.RectF
 import android.util.AttributeSet
 import android.view.View
 import com.blindnav.app.ml.DetectedObject
 import com.blindnav.app.ml.ThreatLevel
 
+/**
+ * Draws AI detection overlays on top of the camera preview.
+ *
+ * Change from the previous version: the walking-corridor trapezoid now only
+ * draws in Demo Mode. It's a visual aid for sighted examiners watching the
+ * screen, not something the (blind/low-vision) user relies on — audio and
+ * haptic feedback carry the real guidance — so it no longer sits permanently
+ * on top of the camera feed.
+ */
 class BoundingBoxOverlayView @JvmOverloads constructor(
     context: Context,
     attrs: AttributeSet? = null,
@@ -18,82 +28,46 @@ class BoundingBoxOverlayView @JvmOverloads constructor(
 
     private var detectedObjects = emptyList<DetectedObject>()
 
-    private val dangerStrokePaint = Paint().apply {
-        color = Color.parseColor("#FF1744")
-        style = Paint.Style.STROKE
-        strokeWidth = 8f
-        isAntiAlias = true
+    private val dangerStroke = Paint().apply {
+        color = Color.parseColor("#FF1744"); style = Paint.Style.STROKE
+        strokeWidth = dp(3).toFloat(); isAntiAlias = true
     }
-
-    private val dangerFillPaint = Paint().apply {
-        color = Color.parseColor("#33FF1744")
-        style = Paint.Style.FILL
-        isAntiAlias = true
+    private val dangerFill = Paint().apply {
+        color = Color.parseColor("#33FF1744"); style = Paint.Style.FILL; isAntiAlias = true
     }
-
-    private val cautionStrokePaint = Paint().apply {
-        color = Color.parseColor("#FFD600")
-        style = Paint.Style.STROKE
-        strokeWidth = 7f
-        isAntiAlias = true
+    private val cautionStroke = Paint().apply {
+        color = Color.parseColor("#FFD600"); style = Paint.Style.STROKE
+        strokeWidth = dp(3).toFloat(); isAntiAlias = true
     }
-
-    private val cautionFillPaint = Paint().apply {
-        color = Color.parseColor("#26FFD600")
-        style = Paint.Style.FILL
-        isAntiAlias = true
+    private val cautionFill = Paint().apply {
+        color = Color.parseColor("#26FFD600"); style = Paint.Style.FILL; isAntiAlias = true
     }
-
-    private val safeStrokePaint = Paint().apply {
-        color = Color.parseColor("#00E676")
-        style = Paint.Style.STROKE
-        strokeWidth = 5f
-        isAntiAlias = true
+    private val safeStroke = Paint().apply {
+        color = Color.parseColor("#00E676"); style = Paint.Style.STROKE
+        strokeWidth = dp(2).toFloat(); isAntiAlias = true
     }
-
-    private val safeFillPaint = Paint().apply {
-        color = Color.parseColor("#1A00E676")
-        style = Paint.Style.FILL
-        isAntiAlias = true
+    private val safeFill = Paint().apply {
+        color = Color.parseColor("#1A00E676"); style = Paint.Style.FILL; isAntiAlias = true
     }
-
-    private val badgeBackgroundPaint = Paint().apply {
-        color = Color.parseColor("#E60D1117")
-        style = Paint.Style.FILL
-        isAntiAlias = true
+    private val badgeBg = Paint().apply {
+        color = Color.parseColor("#E60D1117"); style = Paint.Style.FILL; isAntiAlias = true
     }
-
-    private val badgeBorderPaint = Paint().apply {
-        style = Paint.Style.STROKE
-        strokeWidth = 3f
-        isAntiAlias = true
+    private val badgeBorder = Paint().apply {
+        style = Paint.Style.STROKE; strokeWidth = dp(1).toFloat(); isAntiAlias = true
     }
-
     private val textPaint = Paint().apply {
-        color = Color.WHITE
-        textSize = 38f
-        isAntiAlias = true
-        isFakeBoldText = true
+        color = Color.WHITE; textSize = dp(13).toFloat(); isAntiAlias = true; isFakeBoldText = true
+    }
+    private val corridorStroke = Paint().apply {
+        color = Color.parseColor("#4D00E5FF"); style = Paint.Style.STROKE
+        strokeWidth = dp(2).toFloat(); isAntiAlias = true
+    }
+    private val corridorFill = Paint().apply {
+        color = Color.parseColor("#1200E5FF"); style = Paint.Style.FILL; isAntiAlias = true
     }
 
     var isDemoModeEnabled: Boolean = false
-        set(value) {
-            field = value
-            postInvalidate()
-        }
-
-    private val corridorStrokePaint = Paint().apply {
-        color = Color.parseColor("#4D00E5FF") // 30% translucent cyan
-        style = Paint.Style.STROKE
-        strokeWidth = 4f
-        isAntiAlias = true
-    }
-
-    private val corridorFillPaint = Paint().apply {
-        color = Color.parseColor("#1200E5FF") // 7% translucent cyan
-        style = Paint.Style.FILL
-        isAntiAlias = true
-    }
+        set(value) { field = value; postInvalidate() }
 
     fun updateDetections(objects: List<DetectedObject>) {
         this.detectedObjects = objects
@@ -102,50 +76,35 @@ class BoundingBoxOverlayView @JvmOverloads constructor(
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
+        val w = width.toFloat()
+        val h = height.toFloat()
 
-        val viewWidth = width.toFloat()
-        val viewHeight = height.toFloat()
+        // Corridor guide is a demo/examiner aid only — not shown during normal use.
+        if (isDemoModeEnabled) {
+            drawWalkingCorridor(canvas, w, h)
+        }
 
-        // 1. Draw Safe Walking Corridor Overlay (assistive light pathway)
-        drawWalkingCorridor(canvas, viewWidth, viewHeight)
-
-        // 2. In Normal Mode, do not clutter the screen with dozens of bounding boxes.
-        // Only draw subtle indicator for immediate DANGER obstacles in the path.
         if (!isDemoModeEnabled) {
+            // Normal use: only a subtle box around an immediate in-path danger, nothing else.
             val criticalThreats = detectedObjects.filter { it.threatLevel == ThreatLevel.DANGER && it.isInCorridor }
             for (obj in criticalThreats) {
-                val box = obj.boundingBox
-                val scaledRect = RectF(
-                    box.left * viewWidth,
-                    box.top * viewHeight,
-                    box.right * viewWidth,
-                    box.bottom * viewHeight
-                )
-                canvas.drawRoundRect(scaledRect, 18f, 18f, dangerFillPaint)
-                canvas.drawRoundRect(scaledRect, 18f, 18f, dangerStrokePaint)
+                val rect = scaledRect(obj.boundingBox, w, h)
+                canvas.drawRoundRect(rect, dp(12).toFloat(), dp(12).toFloat(), dangerFill)
+                canvas.drawRoundRect(rect, dp(12).toFloat(), dp(12).toFloat(), dangerStroke)
             }
             return
         }
 
-        // 3. In Demo / Developer Mode, render full AI bounding boxes, labels, distance, and tags for examiner demonstration
+        // Demo mode: full bounding boxes + labels for examiner demonstration.
         for (obj in detectedObjects) {
-            val box = obj.boundingBox
-            val scaledRect = RectF(
-                box.left * viewWidth,
-                box.top * viewHeight,
-                box.right * viewWidth,
-                box.bottom * viewHeight
-            )
-
-            val (strokePaint, fillPaint, badgeColor) = when (obj.threatLevel) {
-                ThreatLevel.DANGER -> Triple(dangerStrokePaint, dangerFillPaint, Color.parseColor("#FF1744"))
-                ThreatLevel.CAUTION -> Triple(cautionStrokePaint, cautionFillPaint, Color.parseColor("#FFD600"))
-                ThreatLevel.SAFE -> Triple(safeStrokePaint, safeFillPaint, Color.parseColor("#00E676"))
+            val rect = scaledRect(obj.boundingBox, w, h)
+            val (stroke, fill, badgeColor) = when (obj.threatLevel) {
+                ThreatLevel.DANGER -> Triple(dangerStroke, dangerFill, Color.parseColor("#FF1744"))
+                ThreatLevel.CAUTION -> Triple(cautionStroke, cautionFill, Color.parseColor("#FFD600"))
+                ThreatLevel.SAFE -> Triple(safeStroke, safeFill, Color.parseColor("#00E676"))
             }
-
-            // Draw semi-transparent rounded box fill & neon stroke border
-            canvas.drawRoundRect(scaledRect, 18f, 18f, fillPaint)
-            canvas.drawRoundRect(scaledRect, 18f, 18f, strokePaint)
+            canvas.drawRoundRect(rect, dp(12).toFloat(), dp(12).toFloat(), fill)
+            canvas.drawRoundRect(rect, dp(12).toFloat(), dp(12).toFloat(), stroke)
 
             val corridorTag = if (obj.isInCorridor) " [PATH]" else ""
             val text = "${obj.label.uppercase()} ${String.format("%.1f", obj.distanceMeters)}m (${(obj.confidence * 100).toInt()}%)$corridorTag"
@@ -153,44 +112,38 @@ class BoundingBoxOverlayView @JvmOverloads constructor(
             val textHeight = textPaint.textSize
 
             val badgeRect = RectF(
-                scaledRect.left,
-                (scaledRect.top - textHeight - 24f).coerceAtLeast(8f),
-                scaledRect.left + textWidth + 32f,
-                (scaledRect.top).coerceAtLeast(textHeight + 32f)
+                rect.left,
+                (rect.top - textHeight - dp(10)).coerceAtLeast(dp(4).toFloat()),
+                rect.left + textWidth + dp(12),
+                rect.top.coerceAtLeast(textHeight + dp(12))
             )
-
-            // Draw rounded badge background with accent border
-            badgeBorderPaint.color = badgeColor
-            canvas.drawRoundRect(badgeRect, 12f, 12f, badgeBackgroundPaint)
-            canvas.drawRoundRect(badgeRect, 12f, 12f, badgeBorderPaint)
-
-            // Draw text label
-            canvas.drawText(text, badgeRect.left + 16f, badgeRect.bottom - 12f, textPaint)
+            badgeBorder.color = badgeColor
+            canvas.drawRoundRect(badgeRect, dp(8).toFloat(), dp(8).toFloat(), badgeBg)
+            canvas.drawRoundRect(badgeRect, dp(8).toFloat(), dp(8).toFloat(), badgeBorder)
+            canvas.drawText(text, badgeRect.left + dp(6), badgeRect.bottom - dp(5), textPaint)
         }
     }
 
-    private fun drawWalkingCorridor(canvas: Canvas, viewWidth: Float, viewHeight: Float) {
-        val path = android.graphics.Path()
-        val bottomY = viewHeight
-        val topY = viewHeight * 0.40f
+    private fun scaledRect(box: RectF, w: Float, h: Float) = RectF(
+        box.left * w, box.top * h, box.right * w, box.bottom * h
+    )
 
-        val bottomWidthHalf = viewWidth * 0.28f // ~56% width at bottom
-        val topWidthHalf = viewWidth * 0.14f    // ~28% width at projected horizon
-        val centerX = viewWidth * 0.50f
+    private fun drawWalkingCorridor(canvas: Canvas, w: Float, h: Float) {
+        val path = Path()
+        val bottomY = h
+        val topY = h * 0.40f
+        val bottomHalf = w * 0.28f
+        val topHalf = w * 0.14f
+        val cx = w * 0.50f
 
-        val p1x = centerX - bottomWidthHalf
-        val p2x = centerX - topWidthHalf
-        val p3x = centerX + topWidthHalf
-        val p4x = centerX + bottomWidthHalf
+        val p1x = cx - bottomHalf; val p2x = cx - topHalf
+        val p3x = cx + topHalf; val p4x = cx + bottomHalf
 
-        path.moveTo(p1x, bottomY)
-        path.lineTo(p2x, topY)
-        path.lineTo(p3x, topY)
-        path.lineTo(p4x, bottomY)
-        path.close()
+        path.moveTo(p1x, bottomY); path.lineTo(p2x, topY)
+        path.lineTo(p3x, topY); path.lineTo(p4x, bottomY); path.close()
 
-        canvas.drawPath(path, corridorFillPaint)
-        canvas.drawLine(p1x, bottomY, p2x, topY, corridorStrokePaint)
-        canvas.drawLine(p4x, bottomY, p3x, topY, corridorStrokePaint)
+        canvas.drawPath(path, corridorFill)
+        canvas.drawLine(p1x, bottomY, p2x, topY, corridorStroke)
+        canvas.drawLine(p4x, bottomY, p3x, topY, corridorStroke)
     }
 }

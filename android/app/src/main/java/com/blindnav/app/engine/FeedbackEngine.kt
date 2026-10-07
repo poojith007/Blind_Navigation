@@ -16,10 +16,19 @@ class FeedbackEngine(private val context: Context) : IFeedbackEngine, TextToSpee
     private var isTtsReady = false
 
     private var isSpeakingActive = false
+    override val isSpeaking: Boolean
+        get() = isSpeakingActive
+
+    override var onSpeakingStateChanged: ((isSpeaking: Boolean) -> Unit)? = null
     private var lastSpokenTimestamp = 0L
 
     override var currentSpeechRate: Float = 1.15f
         private set
+
+    // When the utterance currently playing started. Used to avoid chopping a message
+    // off mid-sentence when another message of the same priority arrives moments later.
+    private var currentUtteranceStartTime = 0L
+    private val minUtteranceProtectionMs = 900L
 
     override var lastSpokenMessage: String = ""
         private set
@@ -46,16 +55,21 @@ class FeedbackEngine(private val context: Context) : IFeedbackEngine, TextToSpee
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                     override fun onStart(utteranceId: String?) {
                         isSpeakingActive = true
+                        currentUtteranceStartTime = System.currentTimeMillis()
+                        onSpeakingStateChanged?.invoke(true)
                     }
 
                     override fun onDone(utteranceId: String?) {
                         isSpeakingActive = false
                         currentPriority = null
+                        onSpeakingStateChanged?.invoke(false)
                     }
 
+                    @Suppress("DEPRECATION")
                     override fun onError(utteranceId: String?) {
                         isSpeakingActive = false
                         currentPriority = null
+                        onSpeakingStateChanged?.invoke(false)
                     }
                 })
             }
@@ -110,11 +124,20 @@ class FeedbackEngine(private val context: Context) : IFeedbackEngine, TextToSpee
             if (text == lastSpokenMessage && (now - lastSpokenTimestamp) < 3500L) {
                 return
             }
+
+            // If a safety/emergency message just started (< minUtteranceProtectionMs ago),
+            // let it finish instead of chopping it off mid-sentence — queue this one
+            // right behind it. This is the fix for messages cutting each other off.
+            val currentlyMidProtectedUtterance = isSpeakingActive &&
+                (currentPriority == SpeechPriority.EMERGENCY || currentPriority == SpeechPriority.SAFETY_WARNING) &&
+                (now - currentUtteranceStartTime) < minUtteranceProtectionMs
+
             lastSpokenMessage = text
             lastSpokenTimestamp = now
             currentPriority = SpeechPriority.SAFETY_WARNING
             if (!isTtsReady) return
-            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "SAFETY_${now}")
+            val queueMode = if (currentlyMidProtectedUtterance) TextToSpeech.QUEUE_ADD else TextToSpeech.QUEUE_FLUSH
+            tts?.speak(text, queueMode, null, "SAFETY_${now}")
             return
         }
 

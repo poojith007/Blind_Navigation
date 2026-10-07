@@ -5,204 +5,142 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
-import android.view.View
 import android.widget.Button
-import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
-import com.blindnav.app.location.GpsConfidence
-import com.blindnav.app.network.ConnectionStatus
+import com.blindnav.app.voice.VoiceState
 
 /**
- * Reusable, Material 3-aligned, high-contrast accessible UI components
- * specifically designed for visually impaired and low-vision pedestrians.
+ * Reusable, high-contrast accessible UI components for the assistive navigation screen.
+ *
+ * Redesign notes (see conversation history for full rationale):
+ * - One StatusBanner replaces four previously-separate always-on widgets
+ *   (status pill, voice badge, system banner, obstacle alert card). Only one
+ *   message is ever shown to the user at a time, chosen by priority in MainActivity.
+ * - The standalone network/GPS badge row and the voice status badge have been
+ *   removed entirely — that information now surfaces through the single banner
+ *   (for GPS/network problems) or the voice button itself (for voice state),
+ *   instead of three overlapping mechanisms.
+ * - All sizes are dp via UiKit.dp()/dpf(), not raw pixels.
  */
 object NavigationComponents {
 
-    /**
-     * Top status pill providing dual encoding (symbols + text) for immediate situational awareness.
-     */
-    fun createStatusPill(context: Context): TextView {
-        return TextView(context).apply {
-            text = "● PATH CLEAR  |  CONTINUE STRAIGHT"
-            textSize = 14f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(Color.parseColor("#00E676"))
-            setPadding(36, 18, 36, 18)
-            gravity = Gravity.CENTER
-            background = GradientDrawable().apply {
-                setColor(Color.parseColor("#E60D1117"))
-                cornerRadius = 32f
-                setStroke(2, Color.parseColor("#3300E676"))
-            }
-            elevation = 16f
-            contentDescription = "System status: Path clear. Continue straight."
-        }
-    }
+    data class StatusBannerViews(
+        val container: LinearLayout,
+        val iconView: TextView,
+        val messageView: TextView
+    )
 
     /**
-     * Dual mini indicator row for Network connection & GPS confidence.
+     * The single top-of-screen status banner. Every state (calm guidance, obstacle
+     * warning, GPS/offline/camera problems, arrival) is expressed through this one
+     * view via [updateStatusBanner], so only one message ever competes for attention.
      */
-    fun createConnectionGpsRow(context: Context): ConnectionGpsViewHolder {
+    fun createStatusBanner(context: Context): StatusBannerViews {
         val container = LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-            setPadding(0, 4, 0, 8)
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(context.dp(16), context.dp(12), context.dp(16), context.dp(12))
+            background = pill(context, Palette.cardBg, Palette.safe, strokeWidthDp = 1, radiusDp = 16)
+            elevation = context.dpf(4)
             layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                gravity = Gravity.CENTER_HORIZONTAL
-            }
-        }
-
-        val netBadge = TextView(context).apply {
-            text = "🟢 ONLINE"
-            textSize = 11f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(Color.parseColor("#00E676"))
-            background = GradientDrawable().apply {
-                setColor(Color.parseColor("#CC121212"))
-                cornerRadius = 14f
-                setStroke(1, Color.parseColor("#00E676"))
-            }
-            setPadding(18, 6, 18, 6)
-            contentDescription = "Network status: Online."
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                setMargins(0, 0, 8, 0)
-            }
-        }
-        container.addView(netBadge)
-
-        val gpsBadge = TextView(context).apply {
-            text = "🟢 GPS GOOD"
-            textSize = 11f
-            setTypeface(typeface, Typeface.BOLD)
-            setTextColor(Color.parseColor("#00E676"))
-            background = GradientDrawable().apply {
-                setColor(Color.parseColor("#CC121212"))
-                cornerRadius = 14f
-                setStroke(1, Color.parseColor("#00E676"))
-            }
-            setPadding(18, 6, 18, 6)
-            contentDescription = "GPS accuracy: Good."
-        }
-        container.addView(gpsBadge)
-
-        return ConnectionGpsViewHolder(container, netBadge, gpsBadge)
-    }
-
-    /**
-     * Contextual banner for hardware/system state (GPS weak, Offline, Camera unavailable).
-     */
-    fun createSystemBanner(context: Context): TextView {
-        return TextView(context).apply {
-            visibility = View.GONE
-            textSize = 14f
-            setTypeface(typeface, Typeface.BOLD)
-            setPadding(24, 16, 24, 16)
-            gravity = Gravity.CENTER
-            setTextColor(Color.BLACK)
-            elevation = 14f
-            background = GradientDrawable().apply {
-                setColor(Color.parseColor("#FFD600"))
-                cornerRadius = 16f
-            }
-            val p = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT
-            ).apply {
-                setMargins(0, 0, 0, 10)
-            }
-            layoutParams = p
+            ).apply { setMargins(0, 0, 0, context.dp(8)) }
         }
+
+        val icon = TextView(context).apply {
+            textSize = 18f
+            setPadding(0, 0, context.dp(10), 0)
+        }
+        container.addView(icon)
+
+        val message = TextView(context).apply {
+            textSize = 15f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(Palette.safe)
+            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        }
+        container.addView(message)
+
+        return StatusBannerViews(container, icon, message)
+    }
+
+    fun updateStatusBanner(views: StatusBannerViews, icon: String, message: String, color: Int) {
+        views.iconView.text = icon
+        views.messageView.text = message
+        views.messageView.setTextColor(color)
+        (views.container.background as? GradientDrawable)?.setStroke(views.container.dp(1), color)
+        views.container.contentDescription = message
     }
 
     /**
-     * Large, high-contrast accessible Voice Control Button.
-     * Primary interaction mechanism for visually impaired users.
+     * Voice control button. Its own text/color now carries all voice-state information
+     * (listening / thinking / speaking / muted) — there is no separate voice badge.
      */
-    fun createVoiceButton(context: Context, onClick: () -> Unit): Button {
+    fun createVoiceButton(
+        context: Context,
+        onClick: () -> Unit,
+        onLongClick: (() -> Unit)? = null
+    ): Button {
         return Button(context).apply {
-            text = "🎤 VOICE COMMAND"
-            textSize = 16f
+            text = "🎙 Voice"
+            textSize = 15f
             setTypeface(typeface, Typeface.BOLD)
-            setTextColor(Color.WHITE)
-            background = GradientDrawable().apply {
-                setColor(Color.parseColor("#1B2228"))
-                cornerRadius = 28f
-                setStroke(3, Color.parseColor("#00E5FF"))
-            }
-            elevation = 14f
-            contentDescription = "Voice command. Double tap to start listening."
-            layoutParams = LinearLayout.LayoutParams(
-                0,
-                150,
-                1.0f
-            ).apply {
-                setMargins(0, 0, 8, 0)
+            setTextColor(Palette.white)
+            background = pill(context, Color.parseColor("#151D28"), Palette.info, strokeWidthDp = 2, radiusDp = 24)
+            elevation = context.dpf(6)
+            contentDescription = "Voice Assistant button. Microphone active. Tap to speak command or long press to toggle mute."
+            layoutParams = LinearLayout.LayoutParams(0, context.dp(52), 1.0f).apply {
+                setMargins(0, 0, context.dp(8), 0)
             }
             setOnClickListener { onClick() }
+            if (onLongClick != null) {
+                setOnLongClickListener {
+                    onLongClick()
+                    true
+                }
+            }
         }
+    }
+
+    fun updateVoiceButton(button: Button, state: VoiceState) {
+        val (label, color, desc) = when (state) {
+            VoiceState.MUTED -> Triple("🔇 Muted", Palette.danger, "Microphone muted. Tap to turn voice listening on.")
+            VoiceState.PROCESSING -> Triple("⋯ Thinking", Palette.caution, "Voice Assistant processing your command.")
+            VoiceState.SPEAKING -> Triple("🔊 Speaking", Palette.safe, "Voice Assistant speaking.")
+            VoiceState.UNAVAILABLE -> Triple("⚠ Unavailable", Palette.muted, "Voice recognition unavailable on this device.")
+            VoiceState.LISTENING -> Triple("🎙 Voice", Palette.info, "Voice Assistant active and listening. Speak a command.")
+        }
+        button.text = label
+        button.setTextColor(if (state == VoiceState.MUTED) Palette.white else Palette.white)
+        (button.background as? GradientDrawable)?.setStroke(button.dp(2), color)
+        button.contentDescription = desc
     }
 
     /**
-     * High-contrast Emergency SOS anchor button.
+     * Emergency SOS / Guardian button. Tap = call guardian, long-press = distress SMS.
      */
-    fun createEmergencyButton(context: Context, onClick: () -> Unit): Button {
+    fun createEmergencyButton(
+        context: Context,
+        onClick: () -> Unit,
+        onLongClick: (() -> Unit)? = null
+    ): Button {
         return Button(context).apply {
-            text = "🚨 EMERGENCY"
-            textSize = 16f
-            setTextColor(Color.WHITE)
+            text = "🛡 SOS"
+            textSize = 15f
+            setTextColor(Palette.white)
             setTypeface(typeface, Typeface.BOLD)
-            background = GradientDrawable().apply {
-                setColor(Color.parseColor("#D50000"))
-                cornerRadius = 28f
-                setStroke(3, Color.parseColor("#FF8A80"))
-            }
-            elevation = 16f
-            contentDescription = "Emergency SOS button. Double tap to trigger emergency assistance."
-            layoutParams = LinearLayout.LayoutParams(
-                0,
-                150,
-                1.0f
-            ).apply {
-                setMargins(8, 0, 0, 0)
+            background = pill(context, Color.parseColor("#C62828"), Color.parseColor("#FF8A80"), strokeWidthDp = 2, radiusDp = 24)
+            elevation = context.dpf(6)
+            contentDescription = "Guardian SOS button. Tap to call guardian. Long press for instant emergency distress SMS."
+            layoutParams = LinearLayout.LayoutParams(0, context.dp(52), 1.0f).apply {
+                setMargins(context.dp(8), 0, 0, 0)
             }
             setOnClickListener { onClick() }
-        }
-    }
-
-    data class ConnectionGpsViewHolder(
-        val container: LinearLayout,
-        val netBadge: TextView,
-        val gpsBadge: TextView
-    ) {
-        fun updateNetwork(status: ConnectionStatus) {
-            netBadge.text = "${status.displayIcon} ${status.label}"
-            val color = when (status) {
-                ConnectionStatus.ONLINE -> Color.parseColor("#00E676")
-                ConnectionStatus.OFFLINE -> Color.parseColor("#FF5252")
-                ConnectionStatus.SYNCING, ConnectionStatus.DOWNLOADING -> Color.parseColor("#00E5FF")
+            if (onLongClick != null) {
+                setOnLongClickListener { onLongClick(); true }
             }
-            netBadge.setTextColor(color)
-            (netBadge.background as? GradientDrawable)?.setStroke(1, color)
-            netBadge.contentDescription = "Network status: ${status.label}."
-        }
-
-        fun updateGps(confidence: GpsConfidence) {
-            gpsBadge.text = "${confidence.displayIcon} ${confidence.label}"
-            val color = when (confidence) {
-                GpsConfidence.GOOD -> Color.parseColor("#00E676")
-                GpsConfidence.WEAK -> Color.parseColor("#FFD600")
-                GpsConfidence.UNAVAILABLE -> Color.parseColor("#FF5252")
-            }
-            gpsBadge.setTextColor(color)
-            (gpsBadge.background as? GradientDrawable)?.setStroke(1, color)
-            gpsBadge.contentDescription = "GPS status: ${confidence.label}."
         }
     }
 }

@@ -4,7 +4,26 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- Deep obsidian cyber background base -->
     <path
-        android:fillColor="@color/ic_launcher_background"
+        android:fillColor="#0B0F19"
         android:pathData="M0,0h108v108h-108z" />
+
+    <!-- Outer concentric radar sonar ring -->
+    <path
+        android:strokeColor="#2200E5FF"
+        android:strokeWidth="1.5"
+        android:pathData="M54,10 A44,44 0 1,0 54,98 A44,44 0 1,0 54,10" />
+
+    <!-- Mid concentric radar sonar ring -->
+    <path
+        android:strokeColor="#2200E676"
+        android:strokeWidth="1.5"
+        android:pathData="M54,22 A32,32 0 1,0 54,86 A32,32 0 1,0 54,22" />
+
+    <!-- Subtle radar crosshair grid guides -->
+    <path
+        android:strokeColor="#12FFFFFF"
+        android:strokeWidth="1"
+        android:pathData="M54,14 L54,94 M14,54 L94,54" />
 </vector>

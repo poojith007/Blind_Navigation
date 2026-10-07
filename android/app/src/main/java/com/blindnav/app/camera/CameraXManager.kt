@@ -95,7 +95,10 @@ class CameraXManager(
         val rotatedBitmap = if (rotationDegrees != 0) {
             val matrix = Matrix()
             matrix.postRotate(rotationDegrees.toFloat())
-            val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+            // rotationDegrees is always an exact multiple of 90 here, so no interpolation is
+            // needed — filter=false skips the bilinear resample pass and is meaningfully
+            // faster per frame with no loss of quality for right-angle rotations.
+            val rotated = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, false)
             if (rotated != bitmap) {
                 bitmap.recycle()
             }

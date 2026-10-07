@@ -43,6 +43,9 @@ sealed class VoiceIntent {
     data class DeleteOfflineArea(val areaName: String) : VoiceIntent()
     data object StorageInquiry : VoiceIntent()
 
+    data object ToggleDemoMode : VoiceIntent()
+    data object OpenGuardianSettings : VoiceIntent()
+
     // General & Diagnostics
     data object HistoryInquiry : VoiceIntent()
     data object ObstacleInquiry : VoiceIntent()
@@ -72,13 +75,16 @@ object VoiceCommandParser {
     fun parse(rawText: String): VoiceIntent {
         val command = rawText.lowercase().trim()
 
-        // 0. Contact Setup (check before general "emergency" keyword)
+        // 0. Contact Setup & Guardian Settings (must be checked before general "emergency" keyword)
+        if (command.contains("guardian settings") || command.contains("configure guardian") || command.contains("emergency settings") || command.contains("guardian setup") || command.contains("setup guardian")) {
+            return VoiceIntent.OpenGuardianSettings
+        }
         if (command.startsWith("set contact") || command.contains("emergency contact") || command.contains("set phone") || command.contains("update contact")) {
             val digits = command.filter { it.isDigit() }
             return if (digits.length >= 3) {
                 VoiceIntent.SetEmergencyContact(digits)
             } else {
-                VoiceIntent.Unknown(rawText)
+                VoiceIntent.OpenGuardianSettings
             }
         }
 
@@ -190,17 +196,10 @@ object VoiceCommandParser {
             return VoiceIntent.AdjustSpeed(faster = false)
         }
 
-        // 6. Contact Setup
-        if (command.startsWith("set contact") || command.contains("emergency contact") || command.contains("set phone") || command.contains("update contact")) {
-            val digits = command.filter { it.isDigit() }
-            return if (digits.length >= 3) {
-                VoiceIntent.SetEmergencyContact(digits)
-            } else {
-                VoiceIntent.Unknown(rawText)
-            }
+        // 6. Hardware, Diagnostics & Vision Controls
+        if (command.contains("demo mode") || command.contains("toggle demo") || command.contains("diagnostic mode") || command.contains("developer mode")) {
+            return VoiceIntent.ToggleDemoMode
         }
-
-        // 7. Hardware & Vision Controls
         if (command.contains("light on") || command.contains("torch on") || command.contains("flash on") || command.contains("turn on light")) {
             return VoiceIntent.ToggleTorch(enable = true)
         }
@@ -213,7 +212,7 @@ object VoiceCommandParser {
         if (command.contains("resume detection") || command.contains("resume scanning") || command.contains("resume scan") || command.contains("start scan") || command.contains("start detection") || command.contains("resume camera")) {
             return VoiceIntent.ToggleDetection(pause = false)
         }
-        if (command.contains("show map") || command.contains("hide map") || command.contains("toggle map") || command.contains("split screen") || command.contains("switch view")) {
+        if (command.contains("show map") || command.contains("hide map") || command.contains("toggle map") || command.contains("toggle view") || command.contains("split screen") || command.contains("switch view") || command.contains("change view") || command.contains("view mode") || command.contains("full camera") || command.contains("full map")) {
             return VoiceIntent.ToggleMap
         }
         if (command.contains("open maps") || command.contains("google maps") || command.contains("external map")) {

@@ -3,10 +3,13 @@ package com.blindnav.app.voice
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.telephony.SmsManager
+import android.util.Log
 import com.blindnav.app.db.AppDatabase
 import com.blindnav.app.db.UserPreferences
 import com.blindnav.app.engine.IFeedbackEngine
@@ -17,6 +20,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.Locale
+
+enum class VoiceState {
+    LISTENING,
+    PROCESSING,
+    SPEAKING,
+    MUTED,
+    UNAVAILABLE
+}
 
 class VoiceAssistant(
     private val context: Context,
@@ -40,6 +51,7 @@ class VoiceAssistant(
     private val onSendLocationAlert: (() -> Unit)? = null,
     private val onInquireDistance: (() -> Unit)? = null,
     private val onInquireObstacles: (() -> Unit)? = null,
+    private val onBeforeListeningStart: (() -> Unit)? = null,
     private val onListeningStarted: (() -> Unit)? = null,
     private val onListeningStopped: (() -> Unit)? = null,
     private val onTriggerEmergencySos: (() -> Unit)? = null,
@@ -51,68 +63,335 @@ class VoiceAssistant(
     private val onDownloadCurrentArea: (() -> Unit)? = null,
     private val onDownloadArea: ((areaName: String) -> Unit)? = null,
     private val onShowOfflineAreas: (() -> Unit)? = null,
-    private val onDeleteOfflineArea: ((areaName: String) -> Unit)? = null
+    private val onDeleteOfflineArea: ((areaName: String) -> Unit)? = null,
+    private val onToggleDemoMode: (() -> Unit)? = null,
+    private val onFallbackSpeechRequested: (() -> Unit)? = null
 ) {
 
+    private val tag = "VoiceAssistant"
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var speechRecognizer: SpeechRecognizer? = null
-    private var isListening = false
+
+    var isListening = false
+        private set
+
+    var isContinuousListeningActive: Boolean = true
+    var isMuted: Boolean = false
+        private set
+
+    var currentVoiceState: VoiceState = VoiceState.LISTENING
+        private set
+
+    var onVoiceStateChanged: ((VoiceState) -> Unit)? = null
+
+    private var isDestroyed = false
+
+    private val restartRunnable = Runnable {
+        if (!isDestroyed && !isMuted && isContinuousListeningActive && !feedbackEngine.isSpeaking) {
+            startListeningInternal(promptSpoken = false)
+        }
+    }
 
     init {
-        if (SpeechRecognizer.isRecognitionAvailable(context)) {
-            speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
-                setRecognitionListener(createListener())
+        recreateRecognizer()
+
+        feedbackEngine.onSpeakingStateChanged = { isSpeaking ->
+            if (isSpeaking) {
+                updateVoiceState(VoiceState.SPEAKING)
+                pauseListeningForTts()
+            } else {
+                resumeListeningAfterTts()
             }
         }
     }
 
-    fun startListening(promptPromptSpoken: Boolean = true) {
-        if (isListening || speechRecognizer == null) return
+    private fun updateVoiceState(newState: VoiceState) {
+        if (currentVoiceState == newState) return
+        currentVoiceState = newState
+        mainHandler.post {
+            onVoiceStateChanged?.invoke(newState)
+        }
+    }
 
-        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
-            putExtra(RecognizerIntent.EXTRA_PROMPT, "Listening...")
+    private fun recreateRecognizer() {
+        if (isDestroyed) return
+        try {
+            speechRecognizer?.destroy()
+        } catch (_: Exception) {}
+        speechRecognizer = null
+
+        val hasRecordAudio = androidx.core.content.ContextCompat.checkSelfPermission(
+            context,
+            android.Manifest.permission.RECORD_AUDIO
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (!hasRecordAudio) {
+            Log.w(tag, "RECORD_AUDIO permission not granted yet.")
+            updateVoiceState(VoiceState.UNAVAILABLE)
+            return
         }
 
-        try {
-            onListeningStarted?.invoke()
-            speechRecognizer?.startListening(intent)
-            isListening = true
-            if (promptPromptSpoken) {
-                feedbackEngine.speakNormal("Listening.")
+        val isAvailable = SpeechRecognizer.isRecognitionAvailable(context)
+        Log.i(tag, "SpeechRecognizer isRecognitionAvailable: $isAvailable")
+        if (isAvailable) {
+            try {
+                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
+                    setRecognitionListener(createListener())
+                }
+                updateVoiceState(if (isMuted) VoiceState.MUTED else VoiceState.LISTENING)
+            } catch (e: Exception) {
+                Log.e(tag, "Failed to create SpeechRecognizer: ${e.message}")
+                updateVoiceState(VoiceState.UNAVAILABLE)
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
+        } else {
+            // Attempt createSpeechRecognizer as fallback in case isRecognitionAvailable returns false incorrectly
+            try {
+                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
+                    setRecognitionListener(createListener())
+                }
+                Log.i(tag, "SpeechRecognizer created via fallback.")
+                updateVoiceState(if (isMuted) VoiceState.MUTED else VoiceState.LISTENING)
+            } catch (e: Exception) {
+                Log.w(tag, "Speech recognition unavailable on device: ${e.message}")
+                updateVoiceState(VoiceState.UNAVAILABLE)
+            }
+        }
+    }
+
+    fun reinitialize() {
+        mainHandler.post {
+            recreateRecognizer()
+            if (speechRecognizer != null && !isMuted && isContinuousListeningActive) {
+                updateVoiceState(VoiceState.LISTENING)
+                scheduleRestart(100L)
+            }
+        }
+    }
+
+    fun startListening(promptPromptSpoken: Boolean = false) {
+        if (isMuted) {
+            isMuted = false
+        }
+        mainHandler.removeCallbacks(restartRunnable)
+
+        // Audio and haptic cue for the user
+        try {
+            val toneGen = android.media.ToneGenerator(android.media.AudioManager.STREAM_NOTIFICATION, 75)
+            toneGen.startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 120)
+        } catch (_: Exception) {}
+        feedbackEngine.vibrateCaution()
+
+        if (speechRecognizer == null) {
+            recreateRecognizer()
+            if (speechRecognizer == null) {
+                onFallbackSpeechRequested?.invoke()
+                return
+            }
+        }
+
+        startListeningInternal(promptSpoken = false)
+    }
+
+    private fun startListeningInternal(promptSpoken: Boolean = false) {
+        if (isDestroyed || isMuted || !isContinuousListeningActive) return
+        if (feedbackEngine.isSpeaking) {
+            updateVoiceState(VoiceState.SPEAKING)
+            return
+        }
+
+        if (speechRecognizer == null) {
+            recreateRecognizer()
+            if (speechRecognizer == null) {
+                updateVoiceState(VoiceState.UNAVAILABLE)
+                return
+            }
+        }
+
+        mainHandler.post {
+            if (isDestroyed || isMuted || !isContinuousListeningActive || feedbackEngine.isSpeaking) return@post
+
+            // Crucial: Release the hardware mic from EnvironmentalAudioEngine before SpeechRecognizer captures it
+            onBeforeListeningStart?.invoke()
+
+            // Pre-emptively cancel any ongoing session to prevent ERROR_CLIENT / ERROR_RECOGNIZER_BUSY
+            try {
+                speechRecognizer?.cancel()
+            } catch (_: Exception) {}
+
+            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            }
+
+            try {
+                speechRecognizer?.startListening(intent)
+                isListening = true
+                updateVoiceState(VoiceState.LISTENING)
+                onListeningStarted?.invoke()
+            } catch (e: Exception) {
+                Log.w(tag, "Error starting speech listening: ${e.message}")
+                isListening = false
+                onListeningStopped?.invoke()
+                recreateRecognizer()
+                scheduleRestart(600L)
+            }
+        }
+    }
+
+    private fun pauseListeningForTts() {
+        mainHandler.removeCallbacks(restartRunnable)
+        if (isListening) {
+            try {
+                speechRecognizer?.cancel()
+            } catch (_: Exception) {}
             isListening = false
             onListeningStopped?.invoke()
+        }
+    }
+
+    private fun resumeListeningAfterTts() {
+        if (!isContinuousListeningActive || isMuted || isDestroyed) {
+            if (isMuted) updateVoiceState(VoiceState.MUTED)
+            return
+        }
+        // Small settle delay after speaker finishes output
+        scheduleRestart(250L)
+    }
+
+    private fun scheduleRestart(delayMs: Long = 200L) {
+        if (!isContinuousListeningActive || isMuted || isDestroyed) return
+        if (feedbackEngine.isSpeaking) return
+
+        mainHandler.removeCallbacks(restartRunnable)
+        mainHandler.postDelayed(restartRunnable, delayMs)
+    }
+
+    fun toggleMute(): Boolean {
+        isMuted = !isMuted
+        if (isMuted) {
+            pauseListeningForTts()
+            updateVoiceState(VoiceState.MUTED)
+            feedbackEngine.speakNormal("Microphone muted. Tap voice button to reactivate.")
+        } else {
+            updateVoiceState(VoiceState.LISTENING)
+            feedbackEngine.speakNormal("Voice active. Listening.")
+            startListening(promptPromptSpoken = false)
+        }
+        return isMuted
+    }
+
+    fun pauseContinuousListening() {
+        isContinuousListeningActive = false
+        mainHandler.removeCallbacks(restartRunnable)
+        pauseListeningForTts()
+    }
+
+    fun resumeContinuousListening() {
+        isContinuousListeningActive = true
+        if (!isMuted && !feedbackEngine.isSpeaking) {
+            updateVoiceState(VoiceState.LISTENING)
+            scheduleRestart(200L)
         }
     }
 
     private fun createListener() = object : RecognitionListener {
-        override fun onReadyForSpeech(params: Bundle?) {}
-        override fun onBeginningOfSpeech() {}
+        override fun onReadyForSpeech(params: Bundle?) {
+            isListening = true
+            updateVoiceState(VoiceState.LISTENING)
+        }
+
+        override fun onBeginningOfSpeech() {
+            // Speech detected from user
+        }
+
         override fun onRmsChanged(rmsdB: Float) {}
         override fun onBufferReceived(buffer: ByteArray?) {}
+
         override fun onEndOfSpeech() {
             isListening = false
+            updateVoiceState(VoiceState.PROCESSING)
             onListeningStopped?.invoke()
         }
+
         override fun onError(error: Int) {
             isListening = false
             onListeningStopped?.invoke()
+
+            val errorName = when (error) {
+                SpeechRecognizer.ERROR_AUDIO -> "ERROR_AUDIO (3)"
+                SpeechRecognizer.ERROR_CLIENT -> "ERROR_CLIENT (5)"
+                SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "ERROR_INSUFFICIENT_PERMISSIONS (9)"
+                SpeechRecognizer.ERROR_NETWORK -> "ERROR_NETWORK (2)"
+                SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "ERROR_NETWORK_TIMEOUT (1)"
+                SpeechRecognizer.ERROR_NO_MATCH -> "ERROR_NO_MATCH (7)"
+                SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "ERROR_RECOGNIZER_BUSY (8)"
+                SpeechRecognizer.ERROR_SERVER -> "ERROR_SERVER (4)"
+                SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "ERROR_SPEECH_TIMEOUT (6)"
+                else -> "UNKNOWN ($error)"
+            }
+            Log.d(tag, "SpeechRecognizer error: $errorName")
+
+            if (!isContinuousListeningActive || isMuted || isDestroyed || feedbackEngine.isSpeaking) {
+                return
+            }
+
+            when (error) {
+                SpeechRecognizer.ERROR_NO_MATCH,
+                SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
+                    // Normal silence or timeout while waiting for voice; restart smoothly
+                    scheduleRestart(250L)
+                }
+                SpeechRecognizer.ERROR_RECOGNIZER_BUSY,
+                SpeechRecognizer.ERROR_CLIENT -> {
+                    // Recognizer desynced or busy; recreate and restart
+                    recreateRecognizer()
+                    scheduleRestart(450L)
+                }
+                SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> {
+                    updateVoiceState(VoiceState.UNAVAILABLE)
+                }
+                SpeechRecognizer.ERROR_AUDIO -> {
+                    // Audio conflict; recreate and backoff so mic settles
+                    recreateRecognizer()
+                    scheduleRestart(700L)
+                }
+                SpeechRecognizer.ERROR_SERVER,
+                SpeechRecognizer.ERROR_NETWORK,
+                SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> {
+                    scheduleRestart(900L)
+                }
+                else -> {
+                    scheduleRestart(400L)
+                }
+            }
         }
 
         override fun onResults(results: Bundle?) {
             isListening = false
             onListeningStopped?.invoke()
+            updateVoiceState(VoiceState.PROCESSING)
+
             val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
             if (!matches.isNullOrEmpty()) {
                 val command = matches[0]
                 processCommand(command)
             }
+
+            if (!feedbackEngine.isSpeaking && isContinuousListeningActive && !isMuted) {
+                scheduleRestart(300L)
+            }
         }
 
-        override fun onPartialResults(partialResults: Bundle?) {}
+        override fun onPartialResults(partialResults: Bundle?) {
+            val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+            if (!matches.isNullOrEmpty()) {
+                val partial = matches[0]
+                if (partial.isNotBlank()) {
+                    Log.d(tag, "Partial speech: $partial")
+                }
+            }
+        }
         override fun onEvent(eventType: Int, params: Bundle?) {}
     }
 
@@ -324,6 +603,18 @@ class VoiceAssistant(
                 }
             }
 
+            is VoiceIntent.ToggleDemoMode -> {
+                if (onToggleDemoMode != null) {
+                    onToggleDemoMode.invoke()
+                } else {
+                    feedbackEngine.speakNormal("Demo diagnostic mode toggled.")
+                }
+            }
+            is VoiceIntent.OpenGuardianSettings -> {
+                feedbackEngine.speakNormal("Opening Guardian contact configuration.")
+                onOpenEmergencySetup?.invoke()
+            }
+
             // Diagnostic & General
             is VoiceIntent.OpenMaps -> {
                 feedbackEngine.speakNormal("Opening Google Maps walking navigation.")
@@ -337,7 +628,7 @@ class VoiceAssistant(
             }
             is VoiceIntent.Help -> {
                 feedbackEngine.speakNormal(
-                    "You can say: Navigate to Bangalore Railway Station, Start navigation, Stop navigation, Pause navigation, Resume navigation, Repeat instruction, Where am I, How far, Go home, Call guardian, Send location, Download this area, Show offline maps, Turn voice guidance on, or Emergency."
+                    "You can say: Navigate to, Start navigation, Stop navigation, Where am I, How far, Call guardian, Send location, Switch view, Demo mode, or Emergency."
                 )
             }
             is VoiceIntent.Unknown -> {
@@ -435,7 +726,12 @@ class VoiceAssistant(
     }
 
     fun destroy() {
-        speechRecognizer?.destroy()
+        isDestroyed = true
+        mainHandler.removeCallbacks(restartRunnable)
+        mainHandler.removeCallbacksAndMessages(null)
+        try {
+            speechRecognizer?.destroy()
+        } catch (_: Exception) {}
         speechRecognizer = null
     }
 }

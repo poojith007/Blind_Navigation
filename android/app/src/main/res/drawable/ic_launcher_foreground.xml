@@ -4,10 +4,53 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- Left Sonar / Acoustic Audio Waves -->
+    <path
+        android:strokeColor="#8000E5FF"
+        android:strokeWidth="2.2"
+        android:strokeLineCap="round"
+        android:pathData="M24,37 C19,47 19,61 24,71" />
+    <path
+        android:strokeColor="#00E5FF"
+        android:strokeWidth="2.8"
+        android:strokeLineCap="round"
+        android:pathData="M31,42 C27,49 27,59 31,66" />
+
+    <!-- Right Sonar / Acoustic Audio Waves -->
+    <path
+        android:strokeColor="#8000E5FF"
+        android:strokeWidth="2.2"
+        android:strokeLineCap="round"
+        android:pathData="M84,37 C89,47 89,61 84,71" />
+    <path
+        android:strokeColor="#00E5FF"
+        android:strokeWidth="2.8"
+        android:strokeLineCap="round"
+        android:pathData="M77,42 C81,49 81,59 77,66" />
+
+    <!-- Assistive Vision Eye Outer Contour -->
+    <path
+        android:fillColor="#E60E1826"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="3.2"
+        android:strokeLineJoin="round"
+        android:strokeLineCap="round"
+        android:pathData="M34,54 C34,54 42,39 54,39 C66,39 74,54 74,54 C74,54 66,69 54,69 C42,69 34,54 34,54 Z" />
+
+    <!-- Intelligent Radar Iris Ring -->
+    <path
+        android:fillColor="#2600E5FF"
+        android:strokeColor="#00E676"
+        android:strokeWidth="2"
+        android:pathData="M54,43 A11,11 0 1,0 54,65 A11,11 0 1,0 54,43" />
+
+    <!-- Forward Navigation Wayfinding Chevron Arrow -->
+    <path
+        android:fillColor="#00E5FF"
+        android:pathData="M54,46 L61,58 L54,54.5 L47,58 Z" />
+
+    <!-- Core Guidance Beacon Dot -->
     <path
         android:fillColor="#FFFFFF"
-        android:pathData="M54,34c-11.05,0 -20,8.95 -20,20s8.95,20 20,20 20,-8.95 20,-20 -8.95,-20 -20,-20zM54,66c-6.63,0 -12,-5.37 -12,-12s5.37,-12 12,-12 12,5.37 12,12 -5.37,12 -12,12z" />
-    <path
-        android:fillColor="#FFFFFF"
-        android:pathData="M54,20c-18.78,0 -34,15.22 -34,34s15.22,34 34,34 34,-15.22 34,-34 -15.22,-34 -34,-34zM54,80c-14.36,0 -26,-11.64 -26,-26s11.64,-26 26,-26 26,11.64 26,26 -11.64,26 -26,26z" />
+        android:pathData="M54,48 A2,2 0 1,0 54,52 A2,2 0 1,0 54,48" />
 </vector>

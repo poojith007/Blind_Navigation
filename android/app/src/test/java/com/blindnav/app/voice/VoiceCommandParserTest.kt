@@ -182,8 +182,36 @@ class VoiceCommandParserTest {
     }
 
     @Test
+    fun testDemoAndGuardianSettingsCommands() {
+        assertEquals(VoiceIntent.ToggleDemoMode, VoiceCommandParser.parse("toggle demo"))
+        assertEquals(VoiceIntent.ToggleDemoMode, VoiceCommandParser.parse("demo mode"))
+        assertEquals(VoiceIntent.ToggleDemoMode, VoiceCommandParser.parse("diagnostic mode"))
+
+        assertEquals(VoiceIntent.OpenGuardianSettings, VoiceCommandParser.parse("guardian settings"))
+        assertEquals(VoiceIntent.OpenGuardianSettings, VoiceCommandParser.parse("configure guardian"))
+        assertEquals(VoiceIntent.OpenGuardianSettings, VoiceCommandParser.parse("emergency settings"))
+        assertEquals(VoiceIntent.OpenGuardianSettings, VoiceCommandParser.parse("guardian setup"))
+
+        assertEquals(VoiceIntent.ToggleMap, VoiceCommandParser.parse("switch view"))
+        assertEquals(VoiceIntent.ToggleMap, VoiceCommandParser.parse("toggle view"))
+        assertEquals(VoiceIntent.ToggleMap, VoiceCommandParser.parse("change view"))
+        assertEquals(VoiceIntent.ToggleMap, VoiceCommandParser.parse("full camera"))
+        assertEquals(VoiceIntent.ToggleMap, VoiceCommandParser.parse("full map"))
+    }
+
+    @Test
     fun testUnknownCommand() {
         val unknown = VoiceCommandParser.parse("play music on spotify")
         assertTrue(unknown is VoiceIntent.Unknown)
+    }
+
+    @Test
+    fun testVoiceStateEnumValues() {
+        assertEquals(5, VoiceState.values().size)
+        assertTrue(VoiceState.values().contains(VoiceState.LISTENING))
+        assertTrue(VoiceState.values().contains(VoiceState.PROCESSING))
+        assertTrue(VoiceState.values().contains(VoiceState.SPEAKING))
+        assertTrue(VoiceState.values().contains(VoiceState.MUTED))
+        assertTrue(VoiceState.values().contains(VoiceState.UNAVAILABLE))
     }
 }

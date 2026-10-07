@@ -78,7 +78,8 @@ dependencies {
 
     // Location & Play Services
     implementation("com.google.android.gms:play-services-location:21.0.1")
-    implementation("com.google.android.gms:play-services-maps:18.2.0")
+    // Map rendering — osmdroid (OpenStreetMap): free forever, no API key, no billing account.
+    implementation("org.osmdroid:osmdroid-android:6.1.20")
 
 
     // Coroutines

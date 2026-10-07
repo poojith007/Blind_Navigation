@@ -45,6 +45,13 @@ class ThreatPrioritizer(
     private var lastClearPathAnnouncementTime = 0L
     private var wasObstacleRecentlyActive = false
 
+    // Hysteresis for evasive direction: without this, a borderline left/right call can flip
+    // every frame on noisy detections, which makes instructionText change constantly and
+    // re-triggers speech far more often than intended (the "too many announcements" issue).
+    private var lastEvasiveDirection: Position = Position.RIGHT
+    private var lastEvasiveDirectionChangeTime = 0L
+    private val evasiveDirectionHoldMs = 1000L
+
     var latestDecision: GuidanceDecision? = null
         private set
 
@@ -160,7 +167,14 @@ class ThreatPrioritizer(
         wasObstacleRecentlyActive = true
 
         // 6 & 7. Determine Evasive Maneuver & Actionable Guidance
-        val evasiveDir = DistanceEstimator.determineEvasiveDirection(relevantDetections)
+        val rawEvasiveDir = DistanceEstimator.determineEvasiveDirection(relevantDetections)
+        val evasiveDir = if (rawEvasiveDir != lastEvasiveDirection && (now - lastEvasiveDirectionChangeTime) > evasiveDirectionHoldMs) {
+            lastEvasiveDirection = rawEvasiveDir
+            lastEvasiveDirectionChangeTime = now
+            rawEvasiveDir
+        } else {
+            lastEvasiveDirection
+        }
         val instructionText = topThreat.toActionableInstruction(evasiveDir)
 
         val isUrgent = topThreat.threatLevel == ThreatLevel.DANGER || topThreat.distanceMeters <= 1.2f
@@ -237,6 +251,8 @@ class ThreatPrioritizer(
         lastAlertThreatLevels.clear()
         lastAlertInstructions.clear()
         wasObstacleRecentlyActive = false
+        lastEvasiveDirection = Position.RIGHT
+        lastEvasiveDirectionChangeTime = 0L
         latestDecision = null
     }
-}
+}   

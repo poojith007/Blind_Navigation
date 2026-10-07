@@ -50,6 +50,7 @@ class EnvironmentalAudioEngine(
     private var recordingThread: Thread? = null
     private val isRecording = AtomicBoolean(false)
     private val isPausedForVoiceCommand = AtomicBoolean(false)
+    private val audioLock = Any()
 
     @Volatile
     private var latestEvidence: AudioEvidence? = null
@@ -70,35 +71,37 @@ class EnvironmentalAudioEngine(
             return
         }
 
-        try {
-            val minBufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
-            val bufferSize = Math.max(minBufferSize, 2048)
+        synchronized(audioLock) {
+            try {
+                val minBufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
+                val bufferSize = Math.max(minBufferSize, 2048)
 
-            audioRecord = AudioRecord(
-                MediaRecorder.AudioSource.MIC,
-                sampleRate,
-                channelConfig,
-                audioFormat,
-                bufferSize
-            )
+                audioRecord = AudioRecord(
+                    MediaRecorder.AudioSource.MIC,
+                    sampleRate,
+                    channelConfig,
+                    audioFormat,
+                    bufferSize
+                )
 
-            if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
-                Log.w(tag, "AudioRecord failed to initialize. Background audio classifier inactive.")
-                return
+                if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
+                    Log.w(tag, "AudioRecord failed to initialize. Background audio classifier inactive.")
+                    return
+                }
+
+                audioRecord?.startRecording()
+                isRecording.set(true)
+
+                recordingThread = Thread({ processAudioStream(bufferSize) }, "EnvironmentalAudioThread").apply {
+                    isDaemon = true
+                    start()
+                }
+                Log.i(tag, "Environmental Audio Engine started successfully.")
+            } catch (e: SecurityException) {
+                Log.w(tag, "SecurityException starting audio recording: ${e.message}")
+            } catch (e: Exception) {
+                Log.e(tag, "Error initializing EnvironmentalAudioEngine: ${e.message}")
             }
-
-            audioRecord?.startRecording()
-            isRecording.set(true)
-
-            recordingThread = Thread({ processAudioStream(bufferSize) }, "EnvironmentalAudioThread").apply {
-                isDaemon = true
-                start()
-            }
-            Log.i(tag, "Environmental Audio Engine started successfully.")
-        } catch (e: SecurityException) {
-            Log.w(tag, "SecurityException starting audio recording: ${e.message}")
-        } catch (e: Exception) {
-            Log.e(tag, "Error initializing EnvironmentalAudioEngine: ${e.message}")
         }
     }
 
@@ -107,17 +110,27 @@ class EnvironmentalAudioEngine(
 
         while (isRecording.get()) {
             if (isPausedForVoiceCommand.get()) {
-                try { Thread.sleep(200) } catch (_: InterruptedException) { break }
+                try { Thread.sleep(150) } catch (_: InterruptedException) { break }
                 continue
             }
 
-            val readBytes = audioRecord?.read(audioBuffer, 0, audioBuffer.size) ?: -1
+            val readBytes = synchronized(audioLock) {
+                if (isRecording.get() && !isPausedForVoiceCommand.get() &&
+                    audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                    audioRecord?.read(audioBuffer, 0, audioBuffer.size) ?: -1
+                } else {
+                    -1
+                }
+            }
+
             if (readBytes > 0) {
                 val evidence = classifyAudioBuffer(audioBuffer, readBytes)
                 if (evidence != null && evidence.type != AudioEventType.NONE) {
                     latestEvidence = evidence
                     onAudioEvidenceDetected?.invoke(evidence)
                 }
+            } else if (readBytes < 0 && isRecording.get() && !isPausedForVoiceCommand.get()) {
+                try { Thread.sleep(50) } catch (_: InterruptedException) { break }
             }
         }
     }
@@ -222,21 +235,51 @@ class EnvironmentalAudioEngine(
 
     fun pauseListening() {
         isPausedForVoiceCommand.set(true)
+        synchronized(audioLock) {
+            try {
+                if (audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                    audioRecord?.stop()
+                    Log.d(tag, "AudioRecord paused and stopped for voice command.")
+                }
+            } catch (e: Exception) {
+                Log.w(tag, "Error stopping AudioRecord for pause: ${e.message}")
+            }
+            Unit
+        }
     }
 
     fun resumeListening() {
-        isPausedForVoiceCommand.set(false)
+        if (!isRecording.get()) return
+        synchronized(audioLock) {
+            try {
+                if (audioRecord?.state == AudioRecord.STATE_INITIALIZED &&
+                    audioRecord?.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                    audioRecord?.startRecording()
+                    Log.d(tag, "AudioRecord resumed after voice command.")
+                }
+            } catch (e: Exception) {
+                Log.w(tag, "Error resuming AudioRecord: ${e.message}")
+            }
+            isPausedForVoiceCommand.set(false)
+            Unit
+        }
     }
 
     fun stop() {
         isRecording.set(false)
-        try {
-            audioRecord?.stop()
-            audioRecord?.release()
-        } catch (e: Exception) {
-            Log.w(tag, "Error stopping AudioRecord: ${e.message}")
+        isPausedForVoiceCommand.set(false)
+        synchronized(audioLock) {
+            try {
+                if (audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                    audioRecord?.stop()
+                }
+                audioRecord?.release()
+            } catch (e: Exception) {
+                Log.w(tag, "Error stopping AudioRecord: ${e.message}")
+            }
+            audioRecord = null
+            recordingThread = null
+            Unit
         }
-        audioRecord = null
-        recordingThread = null
     }
 }
