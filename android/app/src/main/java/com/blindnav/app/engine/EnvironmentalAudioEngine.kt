@@ -239,19 +239,33 @@ class EnvironmentalAudioEngine(
             try {
                 if (audioRecord?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
                     audioRecord?.stop()
-                    Log.d(tag, "AudioRecord paused and stopped for voice command.")
                 }
+                audioRecord?.release()
+                audioRecord = null
+                Log.d(tag, "AudioRecord paused and released for voice command.")
             } catch (e: Exception) {
-                Log.w(tag, "Error stopping AudioRecord for pause: ${e.message}")
+                Log.w(tag, "Error releasing AudioRecord for pause: ${e.message}")
             }
             Unit
         }
     }
 
     fun resumeListening() {
+        isPausedForVoiceCommand.set(false)
         if (!isRecording.get()) return
         synchronized(audioLock) {
             try {
+                if (audioRecord == null && context != null) {
+                    val minBufferSize = AudioRecord.getMinBufferSize(sampleRate, channelConfig, audioFormat)
+                    val bufferSize = Math.max(minBufferSize, 2048)
+                    audioRecord = AudioRecord(
+                        MediaRecorder.AudioSource.MIC,
+                        sampleRate,
+                        channelConfig,
+                        audioFormat,
+                        bufferSize
+                    )
+                }
                 if (audioRecord?.state == AudioRecord.STATE_INITIALIZED &&
                     audioRecord?.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
                     audioRecord?.startRecording()
@@ -260,7 +274,6 @@ class EnvironmentalAudioEngine(
             } catch (e: Exception) {
                 Log.w(tag, "Error resuming AudioRecord: ${e.message}")
             }
-            isPausedForVoiceCommand.set(false)
             Unit
         }
     }

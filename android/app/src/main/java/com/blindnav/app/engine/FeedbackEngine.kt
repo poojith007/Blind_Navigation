@@ -7,13 +7,17 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import android.speech.tts.TextToSpeech
+import android.os.Handler
+import android.os.Looper
 import android.speech.tts.UtteranceProgressListener
 import java.util.Locale
 
 class FeedbackEngine(private val context: Context) : IFeedbackEngine, TextToSpeech.OnInitListener {
 
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var tts: TextToSpeech? = TextToSpeech(context, this)
     private var isTtsReady = false
+    private var pendingInitMessage: Pair<String, SpeechPriority>? = null
 
     private var isSpeakingActive = false
     override val isSpeaking: Boolean
@@ -56,22 +60,26 @@ class FeedbackEngine(private val context: Context) : IFeedbackEngine, TextToSpee
                     override fun onStart(utteranceId: String?) {
                         isSpeakingActive = true
                         currentUtteranceStartTime = System.currentTimeMillis()
-                        onSpeakingStateChanged?.invoke(true)
+                        mainHandler.post { onSpeakingStateChanged?.invoke(true) }
                     }
 
                     override fun onDone(utteranceId: String?) {
                         isSpeakingActive = false
                         currentPriority = null
-                        onSpeakingStateChanged?.invoke(false)
+                        mainHandler.post { onSpeakingStateChanged?.invoke(false) }
                     }
 
                     @Suppress("DEPRECATION")
                     override fun onError(utteranceId: String?) {
                         isSpeakingActive = false
                         currentPriority = null
-                        onSpeakingStateChanged?.invoke(false)
+                        mainHandler.post { onSpeakingStateChanged?.invoke(false) }
                     }
                 })
+                pendingInitMessage?.let { (msg, prio) ->
+                    pendingInitMessage = null
+                    speakWithPriority(msg, prio)
+                }
             }
         }
     }
@@ -101,6 +109,11 @@ class FeedbackEngine(private val context: Context) : IFeedbackEngine, TextToSpee
             return
         }
 
+        if (!isTtsReady) {
+            pendingInitMessage = Pair(text, priority)
+            return
+        }
+
         val now = System.currentTimeMillis()
 
         // 1. Priority 1: EMERGENCY (Immediate Collision / Stop)
@@ -111,7 +124,8 @@ class FeedbackEngine(private val context: Context) : IFeedbackEngine, TextToSpee
             lastSpokenMessage = text
             lastSpokenTimestamp = now
             currentPriority = SpeechPriority.EMERGENCY
-            if (!isTtsReady) return
+            isSpeakingActive = true
+            mainHandler.post { onSpeakingStateChanged?.invoke(true) }
             tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "EMERGENCY_${now}")
             return
         }
@@ -135,7 +149,8 @@ class FeedbackEngine(private val context: Context) : IFeedbackEngine, TextToSpee
             lastSpokenMessage = text
             lastSpokenTimestamp = now
             currentPriority = SpeechPriority.SAFETY_WARNING
-            if (!isTtsReady) return
+            isSpeakingActive = true
+            mainHandler.post { onSpeakingStateChanged?.invoke(true) }
             val queueMode = if (currentlyMidProtectedUtterance) TextToSpeech.QUEUE_ADD else TextToSpeech.QUEUE_FLUSH
             tts?.speak(text, queueMode, null, "SAFETY_${now}")
             return
@@ -152,7 +167,8 @@ class FeedbackEngine(private val context: Context) : IFeedbackEngine, TextToSpee
             lastSpokenMessage = text
             lastSpokenTimestamp = now
             currentPriority = SpeechPriority.NAVIGATION
-            if (!isTtsReady) return
+            isSpeakingActive = true
+            mainHandler.post { onSpeakingStateChanged?.invoke(true) }
             tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "NAV_${now}")
             return
         }
@@ -165,7 +181,8 @@ class FeedbackEngine(private val context: Context) : IFeedbackEngine, TextToSpee
             lastSpokenMessage = text
             lastSpokenTimestamp = now
             currentPriority = SpeechPriority.INFORMATION
-            if (!isTtsReady) return
+            isSpeakingActive = true
+            mainHandler.post { onSpeakingStateChanged?.invoke(true) }
             tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "INFO_${now}")
         }
     }

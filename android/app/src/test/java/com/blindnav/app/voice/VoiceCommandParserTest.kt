@@ -89,6 +89,10 @@ class VoiceCommandParserTest {
         val nav3 = VoiceCommandParser.parse("directions to pharmacy")
         assertTrue(nav3 is VoiceIntent.NavigateTo)
         assertEquals("pharmacy", (nav3 as VoiceIntent.NavigateTo).destination)
+
+        val nav4 = VoiceCommandParser.parse("Navigate to Mini Taj Mahal")
+        assertTrue(nav4 is VoiceIntent.NavigateTo)
+        assertEquals("mini taj mahal", (nav4 as VoiceIntent.NavigateTo).destination)
     }
 
     @Test

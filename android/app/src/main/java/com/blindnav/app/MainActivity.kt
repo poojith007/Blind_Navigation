@@ -405,7 +405,9 @@ class MainActivity : AppCompatActivity() {
                 if (::environmentalAudioEngine.isInitialized) environmentalAudioEngine.pauseListening()
             },
             onListeningStopped = {
-                if (::environmentalAudioEngine.isInitialized) environmentalAudioEngine.resumeListening()
+                if (::environmentalAudioEngine.isInitialized && voiceAssistant.isMuted) {
+                    environmentalAudioEngine.resumeListening()
+                }
             },
             onTriggerEmergencySos = { runOnUiThread { showEmergencySosDialog() } },
             onOpenEmergencySetup = { runOnUiThread { showEmergencySetupDialog() } },
@@ -1031,7 +1033,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun handleMapPointSelected(latLng: GeoPoint) {
         selectedPinLatLng = latLng
+        destinationMarker?.closeInfoWindow()
         destinationMarker?.let { mapView.overlays.remove(it) }
+        destinationMarker = null
 
         val marker = Marker(mapView).apply {
             position = latLng
@@ -1041,7 +1045,9 @@ class MainActivity : AppCompatActivity() {
         }
         mapView.overlays.add(marker)
         destinationMarker = marker
-        marker.showInfoWindow()
+        try {
+            marker.showInfoWindow()
+        } catch (_: Exception) {}
         mapView.invalidate()
 
         val currentLoc = locationHelper.lastLocation ?: Location("user").apply {
@@ -1056,6 +1062,8 @@ class MainActivity : AppCompatActivity() {
             withContext(Dispatchers.Main) {
                 val preview = navigationManager.previewRoute(currentLoc, targetLoc, placeName)
                 currentPreview = preview
+
+                updateUiForState(NavigationUiState.ROUTE_PREVIEW)
                 drawRoutePreviewOnMap(currentLoc, preview)
 
                 destinationTitleTextView.text = placeName
@@ -1065,12 +1073,7 @@ class MainActivity : AppCompatActivity() {
                 destinationMarker?.snippet = "$distStr (${preview.estimatedMinutes} min walk)"
                 mapView.invalidate()
 
-                updateUiForState(NavigationUiState.ROUTE_PREVIEW)
                 feedbackEngine.speakNormal("Destination selected: $placeName. Distance: $distStr. Estimated ${preview.estimatedMinutes} minutes walk. Say START to begin walking navigation, or say CANCEL.")
-                lifecycleScope.launch(Dispatchers.Main) {
-                    delay(4500L)
-                    if (currentUiState == NavigationUiState.ROUTE_PREVIEW) voiceAssistant.startListening()
-                }
             }
         }
     }
@@ -1128,7 +1131,12 @@ class MainActivity : AppCompatActivity() {
                     val preview = navigationManager.previewRoute(currentLoc, targetLoc, displayName)
                     currentPreview = preview
 
+                    updateUiForState(NavigationUiState.ROUTE_PREVIEW)
+
+                    destinationMarker?.closeInfoWindow()
                     destinationMarker?.let { mapView.overlays.remove(it) }
+                    destinationMarker = null
+
                     val marker = Marker(mapView).apply {
                         position = GeoPoint(targetLoc.latitude, targetLoc.longitude)
                         title = displayName
@@ -1137,20 +1145,24 @@ class MainActivity : AppCompatActivity() {
                     }
                     mapView.overlays.add(marker)
                     destinationMarker = marker
-                    marker.showInfoWindow()
+                    try {
+                        marker.showInfoWindow()
+                    } catch (_: Exception) {}
                     mapView.invalidate()
+
                     drawRoutePreviewOnMap(currentLoc, preview)
 
                     destinationTitleTextView.text = displayName
                     val distStr = navigationManager.formatDistance(preview.totalDistanceMeters)
                     destinationDetailsTextView.text = "Distance: $distStr  •  ~${preview.estimatedMinutes} mins walk"
 
-                    updateUiForState(NavigationUiState.ROUTE_PREVIEW)
-                    feedbackEngine.speakNormal("Found $displayName. Distance: $distStr. Estimated ${preview.estimatedMinutes} minutes walk. Say START to begin walking navigation, or say CANCEL.")
-                    lifecycleScope.launch(Dispatchers.Main) {
-                        delay(4500L)
-                        if (currentUiState == NavigationUiState.ROUTE_PREVIEW) voiceAssistant.startListening()
+                    val isTooFarForWalking = preview.totalDistanceMeters > 30000f
+                    val speechAnnouncement = if (isTooFarForWalking) {
+                        "Found $displayName. Distance is $distStr. Note: this destination is very far for walking. Say START to begin walking navigation anyway, or say CANCEL."
+                    } else {
+                        "Found $displayName. Distance: $distStr. Estimated ${preview.estimatedMinutes} minutes walk. Say START to begin walking navigation, or say CANCEL."
                     }
+                    feedbackEngine.speakNormal(speechAnnouncement)
                 } else {
                     feedbackEngine.speakNormal("Could not find location for $trimmed. Please check spelling or try a nearby street name.")
                     Toast.makeText(this@MainActivity, "Destination not found. Try another search.", Toast.LENGTH_SHORT).show()
@@ -1160,7 +1172,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun drawRoutePreviewOnMap(start: Location, preview: RoutePreview) {
-        routePolyline?.let { mapView.overlays.remove(it) }
+        routePolyline?.let { mapView.overlays.remove(it) }; routePolyline = null
         val points = mutableListOf(GeoPoint(start.latitude, start.longitude))
         preview.routeSteps.forEach { points.add(GeoPoint(it.targetLocation.latitude, it.targetLocation.longitude)) }
         val polyline = Polyline(mapView).apply {
@@ -1171,11 +1183,18 @@ class MainActivity : AppCompatActivity() {
         mapView.overlays.add(polyline)
         routePolyline = polyline
         try {
-            val box = BoundingBox.fromGeoPoints(points)
-            mapView.zoomToBoundingBox(box, true, 120)
+            if (mapView.width > 240 && mapView.height > 240 && preview.totalDistanceMeters < 50000f) {
+                val box = BoundingBox.fromGeoPoints(points)
+                mapView.zoomToBoundingBox(box, true, 100)
+            } else {
+                mapView.controller.animateTo(GeoPoint(start.latitude, start.longitude))
+                mapView.controller.setZoom(16.5)
+            }
         } catch (e: Exception) {
-            mapView.controller.animateTo(GeoPoint(start.latitude, start.longitude))
-            mapView.controller.setZoom(17.5)
+            try {
+                mapView.controller.animateTo(GeoPoint(start.latitude, start.longitude))
+                mapView.controller.setZoom(16.5)
+            } catch (_: Exception) {}
         }
         mapView.invalidate()
     }
@@ -1257,6 +1276,7 @@ class MainActivity : AppCompatActivity() {
         navigationManager.stopNavigation()
         onlineOfflineManager.isNavigatingActive = false
         routePolyline?.let { mapView.overlays.remove(it) }; routePolyline = null
+        destinationMarker?.closeInfoWindow()
         destinationMarker?.let { mapView.overlays.remove(it) }; destinationMarker = null
         mapView.invalidate()
         selectedPinLatLng = null
@@ -1268,6 +1288,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun cancelDestinationSelection() {
         routePolyline?.let { mapView.overlays.remove(it) }; routePolyline = null
+        destinationMarker?.closeInfoWindow()
         destinationMarker?.let { mapView.overlays.remove(it) }; destinationMarker = null
         mapView.invalidate()
         selectedPinLatLng = null
@@ -1396,7 +1417,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun drawRouteOnMap(start: Location, target: Location) {
-        routePolyline?.let { mapView.overlays.remove(it) }
+        routePolyline?.let { mapView.overlays.remove(it) }; routePolyline = null
         val points = mutableListOf(GeoPoint(start.latitude, start.longitude))
         if (navigationManager.currentRoute.isNotEmpty()) {
             navigationManager.currentRoute.forEach { points.add(GeoPoint(it.targetLocation.latitude, it.targetLocation.longitude)) }

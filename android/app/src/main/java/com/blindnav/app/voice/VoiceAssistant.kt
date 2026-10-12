@@ -85,6 +85,7 @@ class VoiceAssistant(
     var onVoiceStateChanged: ((VoiceState) -> Unit)? = null
 
     private var isDestroyed = false
+    private var consecutiveErrorCount = 0
 
     private val restartRunnable = Runnable {
         if (!isDestroyed && !isMuted && isContinuousListeningActive && !feedbackEngine.isSpeaking) {
@@ -240,23 +241,30 @@ class VoiceAssistant(
     }
 
     private fun pauseListeningForTts() {
-        mainHandler.removeCallbacks(restartRunnable)
-        if (isListening) {
-            try {
-                speechRecognizer?.cancel()
-            } catch (_: Exception) {}
-            isListening = false
-            onListeningStopped?.invoke()
+        mainHandler.post {
+            mainHandler.removeCallbacks(restartRunnable)
+            if (isListening) {
+                try {
+                    speechRecognizer?.cancel()
+                } catch (_: Exception) {}
+                isListening = false
+                onListeningStopped?.invoke()
+            }
         }
     }
 
     private fun resumeListeningAfterTts() {
-        if (!isContinuousListeningActive || isMuted || isDestroyed) {
-            if (isMuted) updateVoiceState(VoiceState.MUTED)
-            return
+        mainHandler.post {
+            if (!isContinuousListeningActive || isMuted || isDestroyed) {
+                if (isMuted) updateVoiceState(VoiceState.MUTED)
+                return@post
+            }
+            if (speechRecognizer == null) {
+                recreateRecognizer()
+            }
+            // Small settle delay after speaker finishes output
+            scheduleRestart(250L)
         }
-        // Small settle delay after speaker finishes output
-        scheduleRestart(250L)
     }
 
     private fun scheduleRestart(delayMs: Long = 200L) {
@@ -289,6 +297,9 @@ class VoiceAssistant(
 
     fun resumeContinuousListening() {
         isContinuousListeningActive = true
+        if (speechRecognizer == null) {
+            recreateRecognizer()
+        }
         if (!isMuted && !feedbackEngine.isSpeaking) {
             updateVoiceState(VoiceState.LISTENING)
             scheduleRestart(200L)
@@ -298,6 +309,7 @@ class VoiceAssistant(
     private fun createListener() = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {
             isListening = true
+            consecutiveErrorCount = 0
             updateVoiceState(VoiceState.LISTENING)
         }
 
@@ -316,6 +328,7 @@ class VoiceAssistant(
 
         override fun onError(error: Int) {
             isListening = false
+            consecutiveErrorCount++
             onListeningStopped?.invoke()
 
             val errorName = when (error) {
@@ -330,7 +343,7 @@ class VoiceAssistant(
                 SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "ERROR_SPEECH_TIMEOUT (6)"
                 else -> "UNKNOWN ($error)"
             }
-            Log.d(tag, "SpeechRecognizer error: $errorName")
+            Log.d(tag, "SpeechRecognizer error: $errorName (consecutive=$consecutiveErrorCount)")
 
             if (!isContinuousListeningActive || isMuted || isDestroyed || feedbackEngine.isSpeaking) {
                 return
@@ -344,9 +357,10 @@ class VoiceAssistant(
                 }
                 SpeechRecognizer.ERROR_RECOGNIZER_BUSY,
                 SpeechRecognizer.ERROR_CLIENT -> {
-                    // Recognizer desynced or busy; recreate and restart
+                    // Recognizer desynced or busy; recreate with adaptive backoff
                     recreateRecognizer()
-                    scheduleRestart(450L)
+                    val delay = if (consecutiveErrorCount > 3) 1200L else 450L
+                    scheduleRestart(delay)
                 }
                 SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> {
                     updateVoiceState(VoiceState.UNAVAILABLE)
@@ -354,12 +368,14 @@ class VoiceAssistant(
                 SpeechRecognizer.ERROR_AUDIO -> {
                     // Audio conflict; recreate and backoff so mic settles
                     recreateRecognizer()
-                    scheduleRestart(700L)
+                    val delay = if (consecutiveErrorCount > 3) 1500L else 700L
+                    scheduleRestart(delay)
                 }
                 SpeechRecognizer.ERROR_SERVER,
                 SpeechRecognizer.ERROR_NETWORK,
                 SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> {
-                    scheduleRestart(900L)
+                    val delay = if (consecutiveErrorCount > 3) 2000L else 1000L
+                    scheduleRestart(delay)
                 }
                 else -> {
                     scheduleRestart(400L)
@@ -369,6 +385,7 @@ class VoiceAssistant(
 
         override fun onResults(results: Bundle?) {
             isListening = false
+            consecutiveErrorCount = 0
             onListeningStopped?.invoke()
             updateVoiceState(VoiceState.PROCESSING)
 
@@ -378,9 +395,12 @@ class VoiceAssistant(
                 processCommand(command)
             }
 
-            if (!feedbackEngine.isSpeaking && isContinuousListeningActive && !isMuted) {
-                scheduleRestart(300L)
-            }
+            // If TTS hasn't started speaking within 500ms after processing the command, resume listening
+            mainHandler.postDelayed({
+                if (!feedbackEngine.isSpeaking && isContinuousListeningActive && !isMuted && !isListening) {
+                    scheduleRestart(200L)
+                }
+            }, 500L)
         }
 
         override fun onPartialResults(partialResults: Bundle?) {
@@ -399,8 +419,11 @@ class VoiceAssistant(
         when (val intent = VoiceCommandParser.parse(command)) {
             // Navigation Lifecycle
             is VoiceIntent.NavigateTo -> {
-                feedbackEngine.speakNormal("Navigating to ${intent.destination}. Say start navigation to begin.")
-                onNavigateToDestination?.invoke(intent.destination)
+                if (onNavigateToDestination != null) {
+                    onNavigateToDestination.invoke(intent.destination)
+                } else {
+                    feedbackEngine.speakNormal("Searching for ${intent.destination}...")
+                }
             }
             is VoiceIntent.StartNavigation -> {
                 if (onStartNavigation != null) {
@@ -410,16 +433,25 @@ class VoiceAssistant(
                 }
             }
             is VoiceIntent.StopNavigation -> {
-                onCancelNavigation?.invoke()
-                feedbackEngine.speakNormal("Walking navigation stopped.")
+                if (onCancelNavigation != null) {
+                    onCancelNavigation.invoke()
+                } else {
+                    feedbackEngine.speakNormal("Walking navigation stopped.")
+                }
             }
             is VoiceIntent.PauseNavigation -> {
-                onPauseNavigation?.invoke()
-                feedbackEngine.speakNormal("Navigation paused. Say resume navigation when ready.")
+                if (onPauseNavigation != null) {
+                    onPauseNavigation.invoke()
+                } else {
+                    feedbackEngine.speakNormal("Navigation paused. Say resume navigation when ready.")
+                }
             }
             is VoiceIntent.ResumeNavigation -> {
-                onResumeNavigation?.invoke()
-                feedbackEngine.speakNormal("Resuming walking navigation.")
+                if (onResumeNavigation != null) {
+                    onResumeNavigation.invoke()
+                } else {
+                    feedbackEngine.speakNormal("Resuming walking navigation.")
+                }
             }
             is VoiceIntent.GoHome -> {
                 if (onGoHome != null) {

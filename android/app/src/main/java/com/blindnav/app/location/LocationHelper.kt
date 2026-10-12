@@ -253,7 +253,13 @@ class LocationHelper(private val context: Context) {
         val locality = address.locality ?: address.subAdminArea ?: ""
 
         val parts = listOf(feature, thoroughfare, locality).filter { it.isNotBlank() }.distinct()
-        return if (parts.isNotEmpty()) parts.joinToString(", ") else address.getAddressLine(0)
+        return if (parts.isNotEmpty()) {
+            parts.joinToString(", ")
+        } else if (address.maxAddressLineIndex >= 0) {
+            address.getAddressLine(0)
+        } else {
+            null
+        }
     }
 
     /**
