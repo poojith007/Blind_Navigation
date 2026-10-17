@@ -30,12 +30,43 @@ data class GuidanceDecision(
  * 6. Does it affect the user's route?
  * 7. Is there a safer direction?
  * 8. How urgent is the situation?
+ *
+ * Every tunable threshold/cooldown lives in this constructor — nothing is scattered as a
+ * hardcoded magic number deeper in the class — so these can be tuned through testing in one
+ * place without hunting through the implementation.
+ *
+ * @param alertCooldownMs Minimum gap before re-announcing the SAME object, normal case.
+ * @param urgentAlertCooldownMs Minimum gap before re-announcing the SAME object, DANGER/urgent case.
+ * @param globalMinGapMs Minimum gap between ANY two obstacle alerts regardless of object, normal case.
+ *   Without this, several distinct nearby objects — each individually respecting its own
+ *   per-object cooldown — can still fire back-to-back and feel like constant nagging.
+ * @param globalMinGapUrgentMs Same global floor, but for urgent/DANGER alerts.
+ * @param minPersistenceFrames How many consecutive frames an object must be seen before its
+ *   FIRST alert is allowed to fire. This is the temporal-confirmation filter: a single-frame
+ *   misdetection (a shadow, a motion-blurred misclassification) will not by itself speak.
+ * @param persistenceWindowMs How long a gap between sightings of the same object is still
+ *   considered "continuous" for persistence counting, rather than resetting the streak.
+ * @param immediateDangerConfidence A DANGER-level detection at or above this confidence is
+ *   allowed to bypass the persistence requirement and alert on the very first frame — a
+ *   genuinely imminent hazard must never be delayed waiting for a second confirming frame.
+ * @param movedCloserDeltaMeters How much closer (meters) the same object must have gotten
+ *   since its last alert to justify re-announcing before its cooldown has expired.
+ * @param evasiveDirectionHoldMs Minimum time the left/right evasive recommendation is held
+ *   before it's allowed to flip — without this, borderline per-frame noise flaps the
+ *   direction back and forth, which both sounds wrong and re-triggers speech constantly.
  */
 class ThreatPrioritizer(
     private val feedbackEngine: IFeedbackEngine,
     private val spatialSoundEngine: SpatialSoundEngine? = null,
     private val alertCooldownMs: Long = 4500L,
-    private val urgentAlertCooldownMs: Long = 1800L
+    private val urgentAlertCooldownMs: Long = 1800L,
+    private val globalMinGapMs: Long = 2200L,
+    private val globalMinGapUrgentMs: Long = 1100L,
+    private val minPersistenceFrames: Int = 2,
+    private val persistenceWindowMs: Long = 1200L,
+    private val immediateDangerConfidence: Float = 0.55f,
+    private val movedCloserDeltaMeters: Float = 1.0f,
+    private val evasiveDirectionHoldMs: Long = 1000L
 ) {
 
     private val lastAlertTimestamps = mutableMapOf<String, Long>()
@@ -45,12 +76,15 @@ class ThreatPrioritizer(
     private var lastClearPathAnnouncementTime = 0L
     private var wasObstacleRecentlyActive = false
 
-    // Hysteresis for evasive direction: without this, a borderline left/right call can flip
-    // every frame on noisy detections, which makes instructionText change constantly and
-    // re-triggers speech far more often than intended (the "too many announcements" issue).
     private var lastEvasiveDirection: Position = Position.RIGHT
     private var lastEvasiveDirectionChangeTime = 0L
-    private val evasiveDirectionHoldMs = 1000L
+
+    private var lastAnyObstacleAlertTime = 0L
+
+    // Temporal confirmation state: how many consecutive frames (within persistenceWindowMs
+    // of each other) each object class has been continuously seen.
+    private val persistenceCounts = mutableMapOf<String, Int>()
+    private val persistenceLastSeen = mutableMapOf<String, Long>()
 
     var latestDecision: GuidanceDecision? = null
         private set
@@ -203,35 +237,65 @@ class ThreatPrioritizer(
             distanceMeters = topThreat.distanceMeters
         )
 
-        // 8. Cooldown / Deduplication Rules:
+        // 8a. Temporal confirmation: has this object actually been seen persistently, or is
+        // this possibly a single-frame misdetection? Update the consecutive-sightings streak
+        // for this object class regardless of whether we end up alerting.
+        val sinceLastSeen = now - (persistenceLastSeen[objectKeyFor(topThreat)] ?: 0L)
+        val stillBeingSeen = sinceLastSeen <= persistenceWindowMs
+        val persistenceStreak = if (stillBeingSeen) (persistenceCounts[objectKeyFor(topThreat)] ?: 0) + 1 else 1
+        persistenceCounts[objectKeyFor(topThreat)] = persistenceStreak
+        persistenceLastSeen[objectKeyFor(topThreat)] = now
+
+        // 8b. Cooldown / Deduplication Rules:
         // Only repeat an alert when:
         // - the threat level increases
-        // - the object moves significantly closer (by >= 0.7m)
+        // - the object moves significantly closer
         // - the recommended action changes
         // - the previous warning has expired
-        val objectKey = "${topThreat.label}_${topThreat.position}"
+        // Keyed by object class only (not position): as the user walks past something, its
+        // bucket shifts center -> left/right even though it's the same ongoing obstacle —
+        // keying on position too caused a fresh "new object" alert for the same thing.
+        val objectKey = objectKeyFor(topThreat)
         val lastTimestamp = lastAlertTimestamps[objectKey] ?: 0L
         val prevDistance = lastAlertDistances[objectKey] ?: Float.MAX_VALUE
         val prevThreatLevel = lastAlertThreatLevels[objectKey] ?: ThreatLevel.SAFE
         val prevInstruction = lastAlertInstructions[objectKey] ?: ""
         val timeSinceLastAlert = now - lastTimestamp
+        val isFirstAlertForObject = lastTimestamp == 0L
 
         val threatLevelIncreased = topThreat.threatLevel.ordinal > prevThreatLevel.ordinal
-        val movedSignificantlyCloser = (prevDistance - topThreat.distanceMeters) >= 0.7f && topThreat.distanceMeters <= 2.5f
+        val movedSignificantlyCloser = (prevDistance - topThreat.distanceMeters) >= movedCloserDeltaMeters && topThreat.distanceMeters <= 2.5f
         val actionChanged = prevInstruction.isNotBlank() && prevInstruction != instructionText
         val requiredCooldown = if (isUrgent) urgentAlertCooldownMs else (if (isStationary) alertCooldownMs * 2 else alertCooldownMs)
         val warningExpired = timeSinceLastAlert > requiredCooldown
+        val perObjectTrigger = warningExpired || threatLevelIncreased || movedSignificantlyCloser || actionChanged
 
-        if (warningExpired || threatLevelIncreased || movedSignificantlyCloser || actionChanged) {
+        // Temporal confirmation gate: a first-time alert for this object needs either enough
+        // consecutive confirming frames, or — for a genuinely imminent, high-confidence DANGER
+        // — is allowed through immediately. Never equate low confidence with safety: the
+        // bypass requires both DANGER proximity AND a real confidence floor, not just distance.
+        val isConfidentImmediateDanger = topThreat.threatLevel == ThreatLevel.DANGER && topThreat.confidence >= immediateDangerConfidence
+        val temporallyConfirmed = !isFirstAlertForObject || persistenceStreak >= minPersistenceFrames || isConfidentImmediateDanger
+
+        // A fresh escalation to DANGER always gets through — safety first. Everything else
+        // (including a first-time CAUTION alert) still has to respect the global pacing floor.
+        val isEscalationToDanger = threatLevelIncreased && topThreat.threatLevel == ThreatLevel.DANGER
+        val sinceAnyAlert = now - lastAnyObstacleAlertTime
+        val globalGapOk = sinceAnyAlert > (if (isUrgent) globalMinGapUrgentMs else globalMinGapMs)
+
+        if (perObjectTrigger && temporallyConfirmed && (isEscalationToDanger || globalGapOk)) {
             lastAlertTimestamps[objectKey] = now
             lastAlertDistances[objectKey] = topThreat.distanceMeters
             lastAlertThreatLevels[objectKey] = topThreat.threatLevel
             lastAlertInstructions[objectKey] = instructionText
+            lastAnyObstacleAlertTime = now
             dispatchFeedback(decision)
         }
 
         return decision
     }
+
+    private fun objectKeyFor(obj: DetectedObject): String = obj.label
 
     private fun dispatchFeedback(decision: GuidanceDecision) {
         if (decision.instruction.isBlank()) return
@@ -253,6 +317,9 @@ class ThreatPrioritizer(
         wasObstacleRecentlyActive = false
         lastEvasiveDirection = Position.RIGHT
         lastEvasiveDirectionChangeTime = 0L
+        lastAnyObstacleAlertTime = 0L
+        persistenceCounts.clear()
+        persistenceLastSeen.clear()
         latestDecision = null
     }
-}   
+}

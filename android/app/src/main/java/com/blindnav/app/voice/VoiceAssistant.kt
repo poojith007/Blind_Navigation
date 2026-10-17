@@ -51,7 +51,6 @@ class VoiceAssistant(
     private val onSendLocationAlert: (() -> Unit)? = null,
     private val onInquireDistance: (() -> Unit)? = null,
     private val onInquireObstacles: (() -> Unit)? = null,
-    private val onBeforeListeningStart: (() -> Unit)? = null,
     private val onListeningStarted: (() -> Unit)? = null,
     private val onListeningStopped: (() -> Unit)? = null,
     private val onTriggerEmergencySos: (() -> Unit)? = null,
@@ -64,8 +63,7 @@ class VoiceAssistant(
     private val onDownloadArea: ((areaName: String) -> Unit)? = null,
     private val onShowOfflineAreas: (() -> Unit)? = null,
     private val onDeleteOfflineArea: ((areaName: String) -> Unit)? = null,
-    private val onToggleDemoMode: (() -> Unit)? = null,
-    private val onFallbackSpeechRequested: (() -> Unit)? = null
+    private val onToggleDemoMode: (() -> Unit)? = null
 ) {
 
     private val tag = "VoiceAssistant"
@@ -85,7 +83,6 @@ class VoiceAssistant(
     var onVoiceStateChanged: ((VoiceState) -> Unit)? = null
 
     private var isDestroyed = false
-    private var consecutiveErrorCount = 0
 
     private val restartRunnable = Runnable {
         if (!isDestroyed && !isMuted && isContinuousListeningActive && !feedbackEngine.isSpeaking) {
@@ -121,19 +118,7 @@ class VoiceAssistant(
         } catch (_: Exception) {}
         speechRecognizer = null
 
-        val hasRecordAudio = androidx.core.content.ContextCompat.checkSelfPermission(
-            context,
-            android.Manifest.permission.RECORD_AUDIO
-        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
-        if (!hasRecordAudio) {
-            Log.w(tag, "RECORD_AUDIO permission not granted yet.")
-            updateVoiceState(VoiceState.UNAVAILABLE)
-            return
-        }
-
-        val isAvailable = SpeechRecognizer.isRecognitionAvailable(context)
-        Log.i(tag, "SpeechRecognizer isRecognitionAvailable: $isAvailable")
-        if (isAvailable) {
+        if (SpeechRecognizer.isRecognitionAvailable(context)) {
             try {
                 speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
                     setRecognitionListener(createListener())
@@ -144,27 +129,8 @@ class VoiceAssistant(
                 updateVoiceState(VoiceState.UNAVAILABLE)
             }
         } else {
-            // Attempt createSpeechRecognizer as fallback in case isRecognitionAvailable returns false incorrectly
-            try {
-                speechRecognizer = SpeechRecognizer.createSpeechRecognizer(context).apply {
-                    setRecognitionListener(createListener())
-                }
-                Log.i(tag, "SpeechRecognizer created via fallback.")
-                updateVoiceState(if (isMuted) VoiceState.MUTED else VoiceState.LISTENING)
-            } catch (e: Exception) {
-                Log.w(tag, "Speech recognition unavailable on device: ${e.message}")
-                updateVoiceState(VoiceState.UNAVAILABLE)
-            }
-        }
-    }
-
-    fun reinitialize() {
-        mainHandler.post {
-            recreateRecognizer()
-            if (speechRecognizer != null && !isMuted && isContinuousListeningActive) {
-                updateVoiceState(VoiceState.LISTENING)
-                scheduleRestart(100L)
-            }
+            Log.w(tag, "Speech recognition not available on this device.")
+            updateVoiceState(VoiceState.UNAVAILABLE)
         }
     }
 
@@ -173,23 +139,11 @@ class VoiceAssistant(
             isMuted = false
         }
         mainHandler.removeCallbacks(restartRunnable)
-
-        // Audio and haptic cue for the user
-        try {
-            val toneGen = android.media.ToneGenerator(android.media.AudioManager.STREAM_NOTIFICATION, 75)
-            toneGen.startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 120)
-        } catch (_: Exception) {}
-        feedbackEngine.vibrateCaution()
-
-        if (speechRecognizer == null) {
-            recreateRecognizer()
-            if (speechRecognizer == null) {
-                onFallbackSpeechRequested?.invoke()
-                return
-            }
+        if (promptPromptSpoken) {
+            feedbackEngine.speakNormal("Listening.")
+        } else {
+            startListeningInternal(promptSpoken = false)
         }
-
-        startListeningInternal(promptSpoken = false)
     }
 
     private fun startListeningInternal(promptSpoken: Boolean = false) {
@@ -207,64 +161,56 @@ class VoiceAssistant(
             }
         }
 
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+            putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
+            // Removed EXTRA_PREFER_OFFLINE: it forces on-device-only speech models, which most
+            // phones (and nearly all emulators) don't have downloaded, causing unreliable or
+            // failed recognition. Letting the system choose (online when available) is far more
+            // consistent. Also dropped the undocumented DICTATION_MODE extra, which behaves
+            // inconsistently across OEM recognizers.
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
+            putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500L)
+        }
+
         mainHandler.post {
-            if (isDestroyed || isMuted || !isContinuousListeningActive || feedbackEngine.isSpeaking) return@post
-
-            // Crucial: Release the hardware mic from EnvironmentalAudioEngine before SpeechRecognizer captures it
-            onBeforeListeningStart?.invoke()
-
-            // Pre-emptively cancel any ongoing session to prevent ERROR_CLIENT / ERROR_RECOGNIZER_BUSY
-            try {
-                speechRecognizer?.cancel()
-            } catch (_: Exception) {}
-
-            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
-                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
-            }
-
             try {
                 speechRecognizer?.startListening(intent)
                 isListening = true
                 updateVoiceState(VoiceState.LISTENING)
                 onListeningStarted?.invoke()
+                if (promptSpoken) {
+                    feedbackEngine.speakNormal("Listening.")
+                }
             } catch (e: Exception) {
                 Log.w(tag, "Error starting speech listening: ${e.message}")
                 isListening = false
-                onListeningStopped?.invoke()
                 recreateRecognizer()
-                scheduleRestart(600L)
+                scheduleRestart(500L)
             }
         }
     }
 
     private fun pauseListeningForTts() {
-        mainHandler.post {
-            mainHandler.removeCallbacks(restartRunnable)
-            if (isListening) {
-                try {
-                    speechRecognizer?.cancel()
-                } catch (_: Exception) {}
-                isListening = false
-                onListeningStopped?.invoke()
-            }
+        mainHandler.removeCallbacks(restartRunnable)
+        if (isListening) {
+            try {
+                speechRecognizer?.cancel()
+            } catch (_: Exception) {}
+            isListening = false
+            onListeningStopped?.invoke()
         }
     }
 
     private fun resumeListeningAfterTts() {
-        mainHandler.post {
-            if (!isContinuousListeningActive || isMuted || isDestroyed) {
-                if (isMuted) updateVoiceState(VoiceState.MUTED)
-                return@post
-            }
-            if (speechRecognizer == null) {
-                recreateRecognizer()
-            }
-            // Small settle delay after speaker finishes output
-            scheduleRestart(250L)
+        if (!isContinuousListeningActive || isMuted || isDestroyed) {
+            if (isMuted) updateVoiceState(VoiceState.MUTED)
+            return
         }
+        // Small settle delay after speaker finishes output
+        scheduleRestart(250L)
     }
 
     private fun scheduleRestart(delayMs: Long = 200L) {
@@ -284,7 +230,7 @@ class VoiceAssistant(
         } else {
             updateVoiceState(VoiceState.LISTENING)
             feedbackEngine.speakNormal("Voice active. Listening.")
-            startListening(promptPromptSpoken = false)
+            scheduleRestart(250L)
         }
         return isMuted
     }
@@ -297,9 +243,6 @@ class VoiceAssistant(
 
     fun resumeContinuousListening() {
         isContinuousListeningActive = true
-        if (speechRecognizer == null) {
-            recreateRecognizer()
-        }
         if (!isMuted && !feedbackEngine.isSpeaking) {
             updateVoiceState(VoiceState.LISTENING)
             scheduleRestart(200L)
@@ -309,7 +252,6 @@ class VoiceAssistant(
     private fun createListener() = object : RecognitionListener {
         override fun onReadyForSpeech(params: Bundle?) {
             isListening = true
-            consecutiveErrorCount = 0
             updateVoiceState(VoiceState.LISTENING)
         }
 
@@ -328,22 +270,7 @@ class VoiceAssistant(
 
         override fun onError(error: Int) {
             isListening = false
-            consecutiveErrorCount++
             onListeningStopped?.invoke()
-
-            val errorName = when (error) {
-                SpeechRecognizer.ERROR_AUDIO -> "ERROR_AUDIO (3)"
-                SpeechRecognizer.ERROR_CLIENT -> "ERROR_CLIENT (5)"
-                SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "ERROR_INSUFFICIENT_PERMISSIONS (9)"
-                SpeechRecognizer.ERROR_NETWORK -> "ERROR_NETWORK (2)"
-                SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> "ERROR_NETWORK_TIMEOUT (1)"
-                SpeechRecognizer.ERROR_NO_MATCH -> "ERROR_NO_MATCH (7)"
-                SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "ERROR_RECOGNIZER_BUSY (8)"
-                SpeechRecognizer.ERROR_SERVER -> "ERROR_SERVER (4)"
-                SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "ERROR_SPEECH_TIMEOUT (6)"
-                else -> "UNKNOWN ($error)"
-            }
-            Log.d(tag, "SpeechRecognizer error: $errorName (consecutive=$consecutiveErrorCount)")
 
             if (!isContinuousListeningActive || isMuted || isDestroyed || feedbackEngine.isSpeaking) {
                 return
@@ -353,29 +280,19 @@ class VoiceAssistant(
                 SpeechRecognizer.ERROR_NO_MATCH,
                 SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> {
                     // Normal silence or timeout while waiting for voice; restart smoothly
-                    scheduleRestart(250L)
+                    scheduleRestart(150L)
                 }
                 SpeechRecognizer.ERROR_RECOGNIZER_BUSY,
                 SpeechRecognizer.ERROR_CLIENT -> {
-                    // Recognizer desynced or busy; recreate with adaptive backoff
+                    // Recognizer desynced or busy; recreate and restart
                     recreateRecognizer()
-                    val delay = if (consecutiveErrorCount > 3) 1200L else 450L
-                    scheduleRestart(delay)
+                    scheduleRestart(350L)
                 }
-                SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> {
-                    updateVoiceState(VoiceState.UNAVAILABLE)
-                }
-                SpeechRecognizer.ERROR_AUDIO -> {
-                    // Audio conflict; recreate and backoff so mic settles
-                    recreateRecognizer()
-                    val delay = if (consecutiveErrorCount > 3) 1500L else 700L
-                    scheduleRestart(delay)
-                }
+                SpeechRecognizer.ERROR_AUDIO,
                 SpeechRecognizer.ERROR_SERVER,
                 SpeechRecognizer.ERROR_NETWORK,
                 SpeechRecognizer.ERROR_NETWORK_TIMEOUT -> {
-                    val delay = if (consecutiveErrorCount > 3) 2000L else 1000L
-                    scheduleRestart(delay)
+                    scheduleRestart(800L)
                 }
                 else -> {
                     scheduleRestart(400L)
@@ -385,7 +302,6 @@ class VoiceAssistant(
 
         override fun onResults(results: Bundle?) {
             isListening = false
-            consecutiveErrorCount = 0
             onListeningStopped?.invoke()
             updateVoiceState(VoiceState.PROCESSING)
 
@@ -395,23 +311,12 @@ class VoiceAssistant(
                 processCommand(command)
             }
 
-            // If TTS hasn't started speaking within 500ms after processing the command, resume listening
-            mainHandler.postDelayed({
-                if (!feedbackEngine.isSpeaking && isContinuousListeningActive && !isMuted && !isListening) {
-                    scheduleRestart(200L)
-                }
-            }, 500L)
-        }
-
-        override fun onPartialResults(partialResults: Bundle?) {
-            val matches = partialResults?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-            if (!matches.isNullOrEmpty()) {
-                val partial = matches[0]
-                if (partial.isNotBlank()) {
-                    Log.d(tag, "Partial speech: $partial")
-                }
+            if (!feedbackEngine.isSpeaking && isContinuousListeningActive && !isMuted) {
+                scheduleRestart(300L)
             }
         }
+
+        override fun onPartialResults(partialResults: Bundle?) {}
         override fun onEvent(eventType: Int, params: Bundle?) {}
     }
 
@@ -419,11 +324,8 @@ class VoiceAssistant(
         when (val intent = VoiceCommandParser.parse(command)) {
             // Navigation Lifecycle
             is VoiceIntent.NavigateTo -> {
-                if (onNavigateToDestination != null) {
-                    onNavigateToDestination.invoke(intent.destination)
-                } else {
-                    feedbackEngine.speakNormal("Searching for ${intent.destination}...")
-                }
+                feedbackEngine.speakNormal("Navigating to ${intent.destination}. Say start navigation to begin.")
+                onNavigateToDestination?.invoke(intent.destination)
             }
             is VoiceIntent.StartNavigation -> {
                 if (onStartNavigation != null) {
@@ -433,25 +335,16 @@ class VoiceAssistant(
                 }
             }
             is VoiceIntent.StopNavigation -> {
-                if (onCancelNavigation != null) {
-                    onCancelNavigation.invoke()
-                } else {
-                    feedbackEngine.speakNormal("Walking navigation stopped.")
-                }
+                onCancelNavigation?.invoke()
+                feedbackEngine.speakNormal("Walking navigation stopped.")
             }
             is VoiceIntent.PauseNavigation -> {
-                if (onPauseNavigation != null) {
-                    onPauseNavigation.invoke()
-                } else {
-                    feedbackEngine.speakNormal("Navigation paused. Say resume navigation when ready.")
-                }
+                onPauseNavigation?.invoke()
+                feedbackEngine.speakNormal("Navigation paused. Say resume navigation when ready.")
             }
             is VoiceIntent.ResumeNavigation -> {
-                if (onResumeNavigation != null) {
-                    onResumeNavigation.invoke()
-                } else {
-                    feedbackEngine.speakNormal("Resuming walking navigation.")
-                }
+                onResumeNavigation?.invoke()
+                feedbackEngine.speakNormal("Resuming walking navigation.")
             }
             is VoiceIntent.GoHome -> {
                 if (onGoHome != null) {
