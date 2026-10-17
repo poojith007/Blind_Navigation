@@ -1,3 +1,93 @@
 <resources>
     <string name="app_name">BlindNav AI</string>
+
+    <!-- Language Selector -->
+    <string name="language_button_label">Language</string>
+    <string name="language_button_desc">Language selector. Current language: %s. Tap to change language.</string>
+    <string name="select_language_title">Select Language / भाषा चुनें / ಭಾಷೆ ಆಯ್ಕೆಮಾಡಿ</string>
+    <string name="lang_english">English (en-IN)</string>
+    <string name="lang_hindi">हिंदी (Hindi - hi-IN)</string>
+    <string name="lang_kannada">ಕನ್ನಡ (Kannada - kn-IN)</string>
+    <string name="lang_switched_en">Language set to English.</string>
+    <string name="lang_switched_hi">भाषा हिंदी में सेट की गई है।</string>
+    <string name="lang_switched_kn">ಭಾಷೆಯನ್ನು ಕನ್ನಡಕ್ಕೆ ಹೊಂದಿಸಲಾಗಿದೆ.</string>
+    <string name="lang_pack_missing">Language pack missing for %s. Please install it in Google Speech Services.</string>
+    <string name="lang_not_supported">Language %s is not supported on this device. Keeping English.</string>
+
+    <!-- Voice Assistant Status & Control -->
+    <string name="voice_btn_listening">🎙 Voice</string>
+    <string name="voice_btn_thinking">⋯ Thinking</string>
+    <string name="voice_btn_speaking">🔊 Speaking</string>
+    <string name="voice_btn_muted">🔇 Muted</string>
+    <string name="voice_btn_unavailable">⚠ Unavailable</string>
+    <string name="voice_desc_listening">Voice Assistant active and listening. Speak a command.</string>
+    <string name="voice_desc_thinking">Voice Assistant processing your command.</string>
+    <string name="voice_desc_speaking">Voice Assistant speaking.</string>
+    <string name="voice_desc_muted">Microphone muted. Tap to turn voice listening on.</string>
+    <string name="voice_desc_unavailable">Voice recognition unavailable on this device.</string>
+    <string name="prompt_listening">Listening.</string>
+    <string name="prompt_voice_active">Voice active. Listening.</string>
+    <string name="prompt_mic_muted">Microphone muted. Tap voice button to reactivate.</string>
+    <string name="speech_recognition_uninstalled">Speech recognition is not installed on this device. Please install Google Speech Services.</string>
+
+    <!-- Obstacle Warnings & Guidance -->
+    <string name="obstacle_stop_ahead">STOP. Obstacle ahead.</string>
+    <string name="obstacle_stop_vehicle_ahead">STOP. Vehicle ahead.</string>
+    <string name="obstacle_stop_vehicle_right">Vehicle approaching from your right. Stop.</string>
+    <string name="obstacle_stop_vehicle_left">Vehicle approaching from your left. Stop.</string>
+    <string name="obstacle_caution_left">Obstacle ahead. Move slightly left.</string>
+    <string name="obstacle_caution_right">Obstacle ahead. Move slightly right.</string>
+    <string name="obstacle_keep_right">Obstacle on your left. Keep right.</string>
+    <string name="obstacle_keep_left">Obstacle on your right. Keep left.</string>
+    <string name="path_clear">Path clear. Continue straight.</string>
+    <string name="continue_straight">Continue straight.</string>
+    <string name="path_unclear">Path unclear. Please stop and verify surroundings.</string>
+    <string name="siren_detected">Emergency siren detected nearby. Exercise caution.</string>
+    <string name="banner_path_clear">PATH CLEAR</string>
+    <string name="banner_stop_obstacle">STOP. IMMEDIATE OBSTACLE</string>
+    <string name="banner_caution_obstacle">CAUTION. OBSTACLE AHEAD</string>
+    <string name="banner_siren">SIREN DETECTED NEARBY</string>
+
+    <!-- Navigation Guidance -->
+    <string name="nav_started_to">Navigating to %s. Say start navigation to begin.</string>
+    <string name="nav_stopped">Walking navigation stopped.</string>
+    <string name="nav_paused">Navigation paused. Say resume navigation when ready.</string>
+    <string name="nav_resumed">Resuming walking navigation.</string>
+    <string name="nav_arrived">You have arrived at your destination, %s.</string>
+    <string name="nav_step_straight_to">Walk straight toward %s</string>
+    <string name="nav_step_walk_straight">Walk straight for %d meters.</string>
+    <string name="nav_step_in_meters">In %1$d meters, %2$s.</string>
+    <string name="nav_step_prepare">Prepare to %s.</string>
+    <string name="maneuver_turn_right">turn right</string>
+    <string name="maneuver_turn_left">turn left</string>
+    <string name="maneuver_slight_right">keep slight right</string>
+    <string name="maneuver_slight_left">keep slight left</string>
+    <string name="maneuver_straight">continue straight</string>
+    <string name="maneuver_arrive">arrive at destination</string>
+
+    <!-- Emergency SOS & Guardian -->
+    <string name="sos_button_label">🛡 SOS</string>
+    <string name="sos_button_desc">Guardian SOS button. Tap to call guardian. Long press for instant emergency distress SMS.</string>
+    <string name="sos_calling_guardian">Calling Guardian %s…</string>
+    <string name="sos_no_phone">Cannot call guardian. No phone number provided.</string>
+    <string name="sos_acquiring_location">Acquiring location to send emergency alert…</string>
+    <string name="sos_distress_message">Emergency alert from Blind Navigation. I may need assistance. My current location: %s.</string>
+    <string name="sos_distress_no_location">Emergency alert from Blind Navigation. I may need assistance. My current location could not be obtained.</string>
+    <string name="fall_detected_warning">Warning: Fall detected! Emergency SOS will trigger in 10 seconds. Double tap or say Cancel to abort.</string>
+    <string name="fall_alert_sending">Sending emergency fall alert!</string>
+    <string name="fall_alert_canceled">Fall alert canceled. You are safe.</string>
+
+    <!-- Sensors & GPS -->
+    <string name="gps_weak">GPS signal is weak. Please slow down.</string>
+    <string name="gps_unavailable">Location is uncertain. Please stop.</string>
+    <string name="gps_locating">📍 Locating…</string>
+    <string name="facing_direction">facing %s</string>
+    <string name="cardinal_north">North</string>
+    <string name="cardinal_north_east">North-East</string>
+    <string name="cardinal_east">East</string>
+    <string name="cardinal_south_east">South-East</string>
+    <string name="cardinal_south">South</string>
+    <string name="cardinal_south_west">South-West</string>
+    <string name="cardinal_west">West</string>
+    <string name="cardinal_north_west">North-West</string>
 </resources>

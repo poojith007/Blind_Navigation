@@ -143,9 +143,10 @@ class ThreatPrioritizer(
         if (relevantDetections.isEmpty()) {
             if (isAcousticSiren && (now - (lastAlertTimestamps["SIREN_EVENT"] ?: 0L)) > 10000L) {
                 lastAlertTimestamps["SIREN_EVENT"] = now
+                val sirenText = com.blindnav.app.i18n.LocaleManager.getSirenAlertText()
                 val decision = GuidanceDecision(
                     priority = SpeechPriority.SAFETY_WARNING,
-                    instruction = "Emergency siren detected nearby. Exercise caution.",
+                    instruction = sirenText,
                     visualHeadline = "SIREN DETECTED NEARBY",
                     isObstaclePresent = false,
                     audioEvidence = audioEvidence
@@ -160,7 +161,7 @@ class ThreatPrioritizer(
                 wasObstacleRecentlyActive = false
                 lastClearPathAnnouncementTime = now
                 val navActive = navProgress?.nextStep != null && !navProgress.isArrived
-                val clearText = if (navActive) "Path clear. Continue straight." else "Continue straight."
+                val clearText = com.blindnav.app.i18n.LocaleManager.getPathClearText(navActive)
                 val decision = GuidanceDecision(
                     priority = SpeechPriority.INFORMATION,
                     instruction = clearText,
@@ -214,11 +215,7 @@ class ThreatPrioritizer(
         val isUrgent = topThreat.threatLevel == ThreatLevel.DANGER || topThreat.distanceMeters <= 1.2f
         val priority = if (isUrgent) SpeechPriority.EMERGENCY else SpeechPriority.SAFETY_WARNING
 
-        val headline = if (isUrgent) {
-            "STOP. IMMEDIATE OBSTACLE"
-        } else {
-            "CAUTION. OBSTACLE AHEAD"
-        }
+        val headline = com.blindnav.app.i18n.LocaleManager.getHeadlineBanner(isUrgent)
 
         val decision = GuidanceDecision(
             priority = priority,

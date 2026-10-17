@@ -30,34 +30,19 @@ data class DetectedObject(
      * Produces action-first, calm spoken guidance rather than reading out object labels.
      * Prioritizes actionable instructions: "STOP. Obstacle ahead.", "Obstacle ahead. Move slightly left.", etc.
      */
-    fun toActionableInstruction(evasiveDirection: Position = Position.RIGHT): String {
+    fun toActionableInstruction(
+        evasiveDirection: Position = Position.RIGHT,
+        language: com.blindnav.app.i18n.SupportedLanguage = com.blindnav.app.i18n.LocaleManager.currentLanguage
+    ): String {
         val isVehicle = label.lowercase() in listOf("car", "bus", "truck", "motorcycle")
-
-        // Priority 1 — Emergency Stop
-        if (threatLevel == ThreatLevel.DANGER || distanceMeters <= 1.2f) {
-            return if (isVehicle) {
-                when (position) {
-                    Position.RIGHT -> "Vehicle approaching from your right. Stop."
-                    Position.LEFT -> "Vehicle approaching from your left. Stop."
-                    Position.CENTER -> "STOP. Vehicle ahead."
-                }
-            } else {
-                "STOP. Obstacle ahead."
-            }
-        }
-
-        // Priority 2 — Safety Warning with Directional Evasion
-        return when (position) {
-            Position.CENTER -> {
-                if (evasiveDirection == Position.LEFT) {
-                    "Obstacle ahead. Move slightly left."
-                } else {
-                    "Obstacle ahead. Move slightly right."
-                }
-            }
-            Position.LEFT -> "Obstacle on your left. Keep right."
-            Position.RIGHT -> "Obstacle on your right. Keep left."
-        }
+        return com.blindnav.app.i18n.LocaleManager.getObstacleInstruction(
+            position = position,
+            threatLevel = threatLevel,
+            isVehicle = isVehicle,
+            evasiveDirection = evasiveDirection,
+            distanceMeters = distanceMeters,
+            language = language
+        )
     }
 
     /**

@@ -65,7 +65,8 @@ class VoiceAssistant(
     private val onShowOfflineAreas: (() -> Unit)? = null,
     private val onDeleteOfflineArea: ((areaName: String) -> Unit)? = null,
     private val onToggleDemoMode: (() -> Unit)? = null,
-    private val onFallbackSpeechRequested: (() -> Unit)? = null
+    private val onFallbackSpeechRequested: (() -> Unit)? = null,
+    private val onLanguageChangeRequested: ((com.blindnav.app.i18n.SupportedLanguage) -> Unit)? = null
 ) {
 
     private val tag = "VoiceAssistant"
@@ -85,6 +86,9 @@ class VoiceAssistant(
     var onVoiceStateChanged: ((VoiceState) -> Unit)? = null
 
     private var isDestroyed = false
+
+    var currentLocale: Locale = com.blindnav.app.i18n.LocaleManager.currentLocale
+        private set
 
     private val restartRunnable = Runnable {
         if (!isDestroyed && !isMuted && isContinuousListeningActive && !feedbackEngine.isSpeaking) {
@@ -110,6 +114,17 @@ class VoiceAssistant(
         currentVoiceState = newState
         mainHandler.post {
             onVoiceStateChanged?.invoke(newState)
+        }
+    }
+
+    fun updateLanguage(newLocale: Locale) {
+        currentLocale = newLocale
+        mainHandler.post {
+            recreateRecognizer()
+            if (speechRecognizer != null && !isMuted && isContinuousListeningActive) {
+                updateVoiceState(VoiceState.LISTENING)
+                scheduleRestart(150L)
+            }
         }
     }
 
@@ -184,7 +199,8 @@ class VoiceAssistant(
 
         val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-            putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE, currentLocale)
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, currentLocale.toLanguageTag())
             putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
             putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
             // Removed EXTRA_PREFER_OFFLINE: it forces on-device-only speech models, which most
@@ -344,6 +360,11 @@ class VoiceAssistant(
 
     fun processCommand(command: String) {
         when (val intent = VoiceCommandParser.parse(command)) {
+            // Language Switching
+            is VoiceIntent.ChangeLanguage -> {
+                onLanguageChangeRequested?.invoke(intent.targetLanguage)
+            }
+
             // Navigation Lifecycle
             is VoiceIntent.NavigateTo -> {
                 feedbackEngine.speakNormal("Navigating to ${intent.destination}. Say start navigation to begin.")

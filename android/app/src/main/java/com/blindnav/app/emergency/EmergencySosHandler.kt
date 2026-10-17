@@ -24,7 +24,12 @@ class EmergencySosHandler(
          * If location/mapsUrl is available, includes it.
          * If unavailable, explicitly states location could not be obtained without fabricating any data.
          */
-        fun formatEmergencyMessage(location: Location?, address: String?, mapsUrl: String?): String {
+        fun formatEmergencyMessage(
+            location: Location?,
+            address: String?,
+            mapsUrl: String?,
+            language: com.blindnav.app.i18n.SupportedLanguage = com.blindnav.app.i18n.LocaleManager.currentLanguage
+        ): String {
             val locationDetail = when {
                 !address.isNullOrBlank() && !mapsUrl.isNullOrBlank() -> "$address ($mapsUrl)"
                 !mapsUrl.isNullOrBlank() -> mapsUrl
@@ -32,10 +37,28 @@ class EmergencySosHandler(
                 else -> null
             }
 
-            return if (locationDetail != null) {
-                "Emergency alert from Blind Navigation. I may need assistance. My current location: $locationDetail."
-            } else {
-                "Emergency alert from Blind Navigation. I may need assistance. My current location could not be obtained."
+            return when (language) {
+                com.blindnav.app.i18n.SupportedLanguage.ENGLISH -> {
+                    if (locationDetail != null) {
+                        "Emergency alert from Blind Navigation. I may need assistance. My current location: $locationDetail."
+                    } else {
+                        "Emergency alert from Blind Navigation. I may need assistance. My current location could not be obtained."
+                    }
+                }
+                com.blindnav.app.i18n.SupportedLanguage.HINDI -> {
+                    if (locationDetail != null) {
+                        "ब्लाइंड नेविगेशन से आपातकालीन अलर्ट। मुझे सहायता की आवश्यकता हो सकती है। मेरा वर्तमान स्थान: $locationDetail।"
+                    } else {
+                        "ब्लाइंड नेविगेशन से आपातकालीन अलर्ट। मुझे सहायता की आवश्यकता हो सकती है। मेरा वर्तमान स्थान प्राप्त नहीं हो सका।"
+                    }
+                }
+                com.blindnav.app.i18n.SupportedLanguage.KANNADA -> {
+                    if (locationDetail != null) {
+                        "ಬ್ಲೈಂಡ್ ನೆವಿಗೇಷನ್‌ನಿಂದ ತುರ್ತು ಸಂದೇಶ. ನನಗೆ ಸಹಾಯ ಬೇಕಾಗಬಹುದು. ನನ್ನ ಪ್ರಸ್ತುತ ಸ್ಥಳ: $locationDetail."
+                    } else {
+                        "ಬ್ಲೈಂಡ್ ನೆವಿಗೇಷನ್‌ನಿಂದ ತುರ್ತು ಸಂದೇಶ. ನನಗೆ ಸಹಾಯ ಬೇಕಾಗಬಹುದು. ನನ್ನ ಪ್ರಸ್ತುತ ಸ್ಥಳ ಲಭ್ಯವಾಗಿಲ್ಲ."
+                    }
+                }
             }
         }
     }
@@ -46,7 +69,12 @@ class EmergencySosHandler(
      */
     fun callGuardian(contact: GuardianContact): Boolean {
         if (contact.phoneNumber.isBlank()) {
-            feedbackEngine.speakUrgent("Cannot call guardian. No phone number provided.")
+            val noPhoneMsg = when (com.blindnav.app.i18n.LocaleManager.currentLanguage) {
+                com.blindnav.app.i18n.SupportedLanguage.ENGLISH -> "Cannot call guardian. No phone number provided."
+                com.blindnav.app.i18n.SupportedLanguage.HINDI -> "अभिभावक को कॉल नहीं किया जा सकता। कोई फ़ोन नंबर नहीं दिया गया है।"
+                com.blindnav.app.i18n.SupportedLanguage.KANNADA -> "ಪೋಷಕರಿಗೆ ಕರೆ ಮಾಡಲು ಸಾಧ್ಯವಿಲ್ಲ. ಯಾವುದೇ ಫೋನ್ ಸಂಖ್ಯೆ ನೀಡಿಲ್ಲ."
+            }
+            feedbackEngine.speakUrgent(noPhoneMsg)
             return false
         }
 
@@ -55,7 +83,12 @@ class EmergencySosHandler(
             Manifest.permission.CALL_PHONE
         ) == PackageManager.PERMISSION_GRANTED
 
-        feedbackEngine.speakUrgent("Calling Guardian ${contact.name}...")
+        val callingMsg = when (com.blindnav.app.i18n.LocaleManager.currentLanguage) {
+            com.blindnav.app.i18n.SupportedLanguage.ENGLISH -> "Calling Guardian ${contact.name}..."
+            com.blindnav.app.i18n.SupportedLanguage.HINDI -> "अभिभावक ${contact.name} को कॉल किया जा रहा है..."
+            com.blindnav.app.i18n.SupportedLanguage.KANNADA -> "ಪೋಷಕ ${contact.name} ಅವರಿಗೆ ಕರೆ ಮಾಡಲಾಗುತ್ತಿದೆ..."
+        }
+        feedbackEngine.speakUrgent(callingMsg)
 
         return try {
             val intent = if (hasCallPermission) {

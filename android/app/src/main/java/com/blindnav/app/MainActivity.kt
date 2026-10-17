@@ -57,6 +57,8 @@ import com.blindnav.app.ui.BoundingBoxOverlayView
 import com.blindnav.app.ui.NavigationComponents
 import com.blindnav.app.ui.NavigationUiState
 import com.blindnav.app.ui.Palette
+import com.blindnav.app.i18n.LocaleManager
+import com.blindnav.app.i18n.SupportedLanguage
 import com.blindnav.app.ui.dp
 import com.blindnav.app.ui.pill
 import com.blindnav.app.voice.VoiceAssistant
@@ -180,6 +182,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var onlineOfflineManager: OnlineOfflineManager
     private lateinit var offlineAreaManager: OfflineAreaManager
     private lateinit var accessibleVoiceButton: Button
+    private lateinit var languageButton: Button
     private val navigationManager = InAppNavigationManager()
 
     private var destinationMarker: Marker? = null
@@ -220,7 +223,8 @@ class MainActivity : AppCompatActivity() {
         try {
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, Locale.getDefault())
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE, LocaleManager.currentLocale)
+                putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, LocaleManager.currentLocale.toLanguageTag())
                 putExtra(RecognizerIntent.EXTRA_PROMPT, "Say a command (e.g. 'Navigate to Central Park')")
             }
             speechRecognizerLauncher.launch(intent)
@@ -481,7 +485,8 @@ class MainActivity : AppCompatActivity() {
                 }
             },
             onToggleDemoMode = { runOnUiThread { toggleDemoMode() } },
-            onFallbackSpeechRequested = { runOnUiThread { launchSpeechRecognitionFallback() } }
+            onFallbackSpeechRequested = { runOnUiThread { launchSpeechRecognitionFallback() } },
+            onLanguageChangeRequested = { targetLanguage -> runOnUiThread { changeLanguage(targetLanguage) } }
         )
 
         voiceAssistant.onVoiceStateChanged = { state ->
@@ -516,7 +521,9 @@ class MainActivity : AppCompatActivity() {
                 if (prefs.emergencyContactPhone.isNotBlank() && emergencyContactPhone.isBlank()) {
                     emergencyContactPhone = prefs.emergencyContactPhone
                 }
+                val lang = SupportedLanguage.fromCode(prefs.language)
                 withContext(Dispatchers.Main) {
+                    applyLanguage(lang, speakConfirmation = false)
                     feedbackEngine.setSpeechRate(prefs.speechRate)
                     feedbackEngine.isVoiceGuidanceMuted = !prefs.isVoiceGuidanceEnabled
                     feedbackEngine.isVibrationEnabled = prefs.isVibrationEnabled
@@ -528,9 +535,69 @@ class MainActivity : AppCompatActivity() {
                         speechRate = 1.15f,
                         vibrationIntensity = 2,
                         emergencyContactPhone = emergencyContactPhone,
+                        language = "en-IN",
                         isVoiceGuidanceEnabled = true,
                         isVibrationEnabled = true
                     )
+                )
+                withContext(Dispatchers.Main) {
+                    applyLanguage(SupportedLanguage.ENGLISH, speakConfirmation = false)
+                }
+            }
+        }
+    }
+
+    private fun showLanguageSelectionDialog() {
+        val languages = SupportedLanguage.values()
+        val languageNames = languages.map { it.displayName }.toTypedArray()
+        val currentIndex = languages.indexOf(LocaleManager.currentLanguage).coerceAtLeast(0)
+
+        android.app.AlertDialog.Builder(this)
+            .setTitle(LocaleManager.getString(this, R.string.select_language_title))
+            .setSingleChoiceItems(languageNames, currentIndex) { dialog, which ->
+                val selected = languages[which]
+                changeLanguage(selected)
+                dialog.dismiss()
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun changeLanguage(targetLanguage: SupportedLanguage) {
+        val isEmergencyActive = fallDetector.isCountdownActive ||
+            threatPrioritizer.latestDecision?.priority == SpeechPriority.EMERGENCY
+
+        applyLanguage(targetLanguage, speakConfirmation = !isEmergencyActive)
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            val current = database.detectionDao().getPreferences() ?: UserPreferences()
+            database.detectionDao().savePreferences(current.copy(language = targetLanguage.code))
+        }
+    }
+
+    private fun applyLanguage(targetLanguage: SupportedLanguage, speakConfirmation: Boolean = false) {
+        LocaleManager.setLanguage(targetLanguage)
+        val ttsResult = feedbackEngine.setLanguage(targetLanguage.locale)
+
+        if (::voiceAssistant.isInitialized) {
+            voiceAssistant.updateLanguage(targetLanguage.locale)
+        }
+        if (::languageButton.isInitialized) {
+            NavigationComponents.updateLanguageButton(languageButton, targetLanguage)
+        }
+
+        if (speakConfirmation) {
+            if (ttsResult == android.speech.tts.TextToSpeech.LANG_MISSING_DATA) {
+                feedbackEngine.speakNormal(
+                    LocaleManager.getString(this, R.string.lang_pack_missing, targetLanguage.displayName)
+                )
+            } else if (ttsResult == android.speech.tts.TextToSpeech.LANG_NOT_SUPPORTED) {
+                feedbackEngine.speakNormal(
+                    LocaleManager.getString(this, R.string.lang_not_supported, targetLanguage.displayName)
+                )
+            } else {
+                feedbackEngine.speakNormal(
+                    LocaleManager.getLanguageConfirmationSpoken(targetLanguage)
                 )
             }
         }
@@ -840,7 +907,7 @@ class MainActivity : AppCompatActivity() {
 
         rootLayout.addView(topOverlayContainer)
 
-        // Bottom: Voice + SOS
+        // Bottom: Language + Voice + SOS
         val bottomActionContainer = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             elevation = dp(10).toFloat()
@@ -849,6 +916,11 @@ class MainActivity : AppCompatActivity() {
                 setMargins(dp(12), 0, dp(12), dp(18))
             }
         }
+        languageButton = NavigationComponents.createLanguageButton(
+            context = this,
+            currentLanguage = LocaleManager.currentLanguage,
+            onClick = { showLanguageSelectionDialog() }
+        )
         accessibleVoiceButton = NavigationComponents.createVoiceButton(
             context = this,
             onClick = {
@@ -882,6 +954,8 @@ class MainActivity : AppCompatActivity() {
             },
             onLongClick = { showEmergencySosDialog() }
         )
+        bottomActionContainer.addView(languageButton)
+        bottomActionContainer.addView(accessibleVoiceButton)
         bottomActionContainer.addView(emergencyButton)
         rootLayout.addView(bottomActionContainer)
 

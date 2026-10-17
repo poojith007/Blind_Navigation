@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ब्लाइंडनेव एआई</string>
+
+    <!-- Language Selector -->
+    <string name="language_button_label">भाषा</string>
+    <string name="language_button_desc">भाषा चयनकर्ता। वर्तमान भाषा: %s। भाषा बदलने के लिए टैप करें।</string>
+    <string name="select_language_title">भाषा चुनें / Select Language</string>
+    <string name="lang_english">English (अंग्रेज़ी - en-IN)</string>
+    <string name="lang_hindi">हिंदी (Hindi - hi-IN)</string>
+    <string name="lang_kannada">ಕನ್ನಡ (कन्नड़ - kn-IN)</string>
+    <string name="lang_switched_en">Language set to English.</string>
+    <string name="lang_switched_hi">भाषा हिंदी में सेट की गई है।</string>
+    <string name="lang_switched_kn">ಭಾಷೆಯನ್ನು ಕನ್ನಡಕ್ಕೆ ಹೊಂದಿಸಲಾಗಿದೆ.</string>
+    <string name="lang_pack_missing">%s के लिए भाषा पैक उपलब्ध नहीं है। कृपया Google Speech Services में इसे डाउनलोड करें।</string>
+    <string name="lang_not_supported">इस डिवाइस पर %s भाषा समर्थित नहीं है। अंग्रेज़ी जारी रखी जा रही है।</string>
+
+    <!-- Voice Assistant Status & Control -->
+    <string name="voice_btn_listening">🎙 वॉयस</string>
+    <string name="voice_btn_thinking">⋯ सोच रहा है</string>
+    <string name="voice_btn_speaking">🔊 बोल रहा है</string>
+    <string name="voice_btn_muted">🔇 म्यूट</string>
+    <string name="voice_btn_unavailable">⚠ अनुपलब्ध</string>
+    <string name="voice_desc_listening">वॉयस असिस्टेंट सक्रिय है और सुन रहा है। कमांड बोलें।</string>
+    <string name="voice_desc_thinking">वॉयस असिस्टेंट आपकी कमांड प्रोसेस कर रहा है।</string>
+    <string name="voice_desc_speaking">वॉयस असिस्टेंट बोल रहा है।</string>
+    <string name="voice_desc_muted">माइक्रोफ़ोन म्यूट है। वॉयस लिसनिंग चालू करने के लिए टैप करें।</string>
+    <string name="voice_desc_unavailable">इस डिवाइस पर वॉयस रिकग्निशन उपलब्ध नहीं है।</string>
+    <string name="prompt_listening">सुन रहा हूँ।</string>
+    <string name="prompt_voice_active">आवाज सक्रिय है। सुन रहा हूँ।</string>
+    <string name="prompt_mic_muted">माइक्रोफ़ोन म्यूट है। पुनः सक्रिय करने के लिए वॉयस बटन दबाएं।</string>
+    <string name="speech_recognition_uninstalled">इस डिवाइस पर स्पीच रिकग्निशन इंस्टॉल नहीं है। कृपया Google Speech Services इंस्टॉल करें।</string>
+
+    <!-- Obstacle Warnings & Guidance -->
+    <string name="obstacle_stop_ahead">रुकें! आगे बाधा है।</string>
+    <string name="obstacle_stop_vehicle_ahead">रुकें! आगे वाहन है।</string>
+    <string name="obstacle_stop_vehicle_right">आपके दाईं ओर से वाहन आ रहा है। रुकें।</string>
+    <string name="obstacle_stop_vehicle_left">आपके बाईं ओर से वाहन आ रहा है। रुकें।</string>
+    <string name="obstacle_caution_left">आगे बाधा है। थोड़ा बाएं चलें।</string>
+    <string name="obstacle_caution_right">आगे बाधा है। थोड़ा दाएं चलें।</string>
+    <string name="obstacle_keep_right">आपके बाईं ओर बाधा है। दाईं ओर रहें।</string>
+    <string name="obstacle_keep_left">आपके दाईं ओर बाधा है। बाईं ओर रहें।</string>
+    <string name="path_clear">रास्ता साफ है। सीधे चलते रहें।</string>
+    <string name="continue_straight">सीधे चलते रहें।</string>
+    <string name="path_unclear">रास्ता स्पष्ट नहीं है। कृपया रुकें और आसपास की जांच करें।</string>
+    <string name="siren_detected">आस-पास आपातकालीन सायरन सुनाई दिया है। सावधानी बरतें।</string>
+    <string name="banner_path_clear">रास्ता साफ है</string>
+    <string name="banner_stop_obstacle">रुकें! तत्काल बाधा</string>
+    <string name="banner_caution_obstacle">सावधान! आगे बाधा है</string>
+    <string name="banner_siren">सायरन का पता चला</string>
+
+    <!-- Navigation Guidance -->
+    <string name="nav_started_to">%s के लिए नेविगेशन। शुरू करने के लिए कहें: शुरू करें।</string>
+    <string name="nav_stopped">पैदल नेविगेशन रोक दिया गया है।</string>
+    <string name="nav_paused">नेविगेशन रोका गया। तैयार होने पर कहें: फिर से शुरू करें।</string>
+    <string name="nav_resumed">पैदल नेविगेशन फिर से शुरू किया जा रहा है।</string>
+    <string name="nav_arrived">आप अपने गंतव्य, %s पर पहुंच गए हैं।</string>
+    <string name="nav_step_straight_to">%s की ओर सीधे चलें</string>
+    <string name="nav_step_walk_straight">%d मीटर सीधे चलें।</string>
+    <string name="nav_step_in_meters">%1$d मीटर में, %2$s।</string>
+    <string name="nav_step_prepare">%s के लिए तैयार रहें।</string>
+    <string name="maneuver_turn_right">दाएं मुड़ें</string>
+    <string name="maneuver_turn_left">बाएं मुड़ें</string>
+    <string name="maneuver_slight_right">हल्का दाएं रहें</string>
+    <string name="maneuver_slight_left">हल्का बाएं रहें</string>
+    <string name="maneuver_straight">सीधे चलें</string>
+    <string name="maneuver_arrive">गंतव्य पर पहुंचें</string>
+
+    <!-- Emergency SOS & Guardian -->
+    <string name="sos_button_label">🛡 एसओएस</string>
+    <string name="sos_button_desc">गार्जियन एसओएस बटन। कॉल करने के लिए टैप करें। संकट संदेश के लिए देर तक दबाएं।</string>
+    <string name="sos_calling_guardian">अभिभावक %s को कॉल किया जा रहा है…</string>
+    <string name="sos_no_phone">अभिभावक को कॉल नहीं किया जा सकता। कोई फ़ोन नंबर नहीं दिया गया है।</string>
+    <string name="sos_acquiring_location">आपातकालीन अलर्ट भेजने के लिए स्थान प्राप्त किया जा रहा है…</string>
+    <string name="sos_distress_message">ब्लाइंड नेविगेशन से आपातकालीन अलर्ट। मुझे सहायता की आवश्यकता हो सकती है। मेरा वर्तमान स्थान: %s।</string>
+    <string name="sos_distress_no_location">ब्लाइंड नेविगेशन से आपातकालीन अलर्ट। मुझे सहायता की आवश्यकता हो सकती है। मेरा वर्तमान स्थान प्राप्त नहीं हो सका।</string>
+    <string name="fall_detected_warning">चेतावनी: गिरने का पता चला है! आपातकालीन एसओएस 10 सेकंड में शुरू होगा। रद्द करने के लिए डबल टैप करें या कैंसिल कहें।</string>
+    <string name="fall_alert_sending">आपातकालीन फॉल अलर्ट भेजा जा रहा है!</string>
+    <string name="fall_alert_canceled">गिरने का अलर्ट रद्द कर दिया गया। आप सुरक्षित हैं।</string>
+
+    <!-- Sensors & GPS -->
+    <string name="gps_weak">जीपीएस सिग्नल कमजोर है। कृपया गति धीमी करें।</string>
+    <string name="gps_unavailable">स्थान अनिश्चित है। कृपया रुकें।</string>
+    <string name="gps_locating">📍 स्थान खोजा जा रहा है…</string>
+    <string name="facing_direction">दिशा %s</string>
+    <string name="cardinal_north">उत्तर</string>
+    <string name="cardinal_north_east">उत्तर-पूर्व</string>
+    <string name="cardinal_east">पूर्व</string>
+    <string name="cardinal_south_east">दक्षिण-पूर्व</string>
+    <string name="cardinal_south">दक्षिण</string>
+    <string name="cardinal_south_west">दक्षिण-पश्चिम</string>
+    <string name="cardinal_west">पश्चिम</string>
+    <string name="cardinal_north_west">उत्तर-पश्चिम</string>
+</resources>

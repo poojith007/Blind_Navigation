@@ -10,6 +10,8 @@ import android.speech.tts.TextToSpeech
 import android.os.Handler
 import android.os.Looper
 import android.speech.tts.UtteranceProgressListener
+import android.util.Log
+import com.blindnav.app.i18n.LocaleManager
 import java.util.Locale
 
 class FeedbackEngine(private val context: Context) : IFeedbackEngine, TextToSpeech.OnInitListener {
@@ -18,6 +20,9 @@ class FeedbackEngine(private val context: Context) : IFeedbackEngine, TextToSpee
     private var tts: TextToSpeech? = TextToSpeech(context, this)
     private var isTtsReady = false
     private var pendingInitMessage: Pair<String, SpeechPriority>? = null
+
+    override var currentLocale: Locale = LocaleManager.currentLocale
+        private set
 
     private var isSpeakingActive = false
     override val isSpeaking: Boolean
@@ -52,8 +57,8 @@ class FeedbackEngine(private val context: Context) : IFeedbackEngine, TextToSpee
 
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
-            val result = tts?.setLanguage(Locale.US)
-            if (result != TextToSpeech.LANG_MISSING_DATA && result != TextToSpeech.LANG_NOT_SUPPORTED) {
+            val availability = setLanguage(currentLocale)
+            if (availability != TextToSpeech.LANG_NOT_SUPPORTED) {
                 isTtsReady = true
                 tts?.setSpeechRate(currentSpeechRate)
                 tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
@@ -80,6 +85,33 @@ class FeedbackEngine(private val context: Context) : IFeedbackEngine, TextToSpee
                     pendingInitMessage = null
                     speakWithPriority(msg, prio)
                 }
+            }
+        }
+    }
+
+    override fun setLanguage(locale: Locale): Int {
+        currentLocale = locale
+        val ttsInstance = tts ?: return TextToSpeech.LANG_NOT_SUPPORTED
+        val availability = ttsInstance.isLanguageAvailable(locale)
+        return when (availability) {
+            TextToSpeech.LANG_AVAILABLE,
+            TextToSpeech.LANG_COUNTRY_AVAILABLE,
+            TextToSpeech.LANG_COUNTRY_VAR_AVAILABLE -> {
+                ttsInstance.setLanguage(locale)
+                availability
+            }
+            TextToSpeech.LANG_MISSING_DATA -> {
+                Log.w("FeedbackEngine", "TTS voice data missing for locale: $locale")
+                val fallbackRes = ttsInstance.setLanguage(locale)
+                if (fallbackRes == TextToSpeech.LANG_MISSING_DATA || fallbackRes == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    ttsInstance.setLanguage(Locale.US)
+                }
+                availability
+            }
+            else -> {
+                Log.w("FeedbackEngine", "TTS language not supported for locale: $locale. Falling back to English.")
+                ttsInstance.setLanguage(Locale.US)
+                availability
             }
         }
     }

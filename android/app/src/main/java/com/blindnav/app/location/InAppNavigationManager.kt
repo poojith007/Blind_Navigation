@@ -300,7 +300,11 @@ class InAppNavigationManager {
         if (!isNavigating || isPaused || progress.nextStep == null) {
             if (progress.isArrived && lastSpokenStepIndex != 9999) {
                 lastSpokenStepIndex = 9999
-                return "You have arrived at your destination, $destinationName."
+                return when (com.blindnav.app.i18n.LocaleManager.currentLanguage) {
+                    com.blindnav.app.i18n.SupportedLanguage.ENGLISH -> "You have arrived at your destination, $destinationName."
+                    com.blindnav.app.i18n.SupportedLanguage.HINDI -> "आप अपने गंतव्य, $destinationName पर पहुंच गए हैं।"
+                    com.blindnav.app.i18n.SupportedLanguage.KANNADA -> "ನೀವು ನಿಮ್ಮ ಗಮ್ಯಸ್ಥಾನ, $destinationName ತಲುಪಿದ್ದೀರಿ."
+                }
             }
             return null
         }
@@ -312,19 +316,31 @@ class InAppNavigationManager {
         if (currentStepIndex != lastSpokenStepIndex) {
             lastSpokenStepIndex = currentStepIndex
             lastAnnouncementDistance = progress.distanceToNextStepMeters
-            return "${step.instruction}. Walk straight for $dist meters."
+            return when (com.blindnav.app.i18n.LocaleManager.currentLanguage) {
+                com.blindnav.app.i18n.SupportedLanguage.ENGLISH -> "${step.instruction}. Walk straight for $dist meters."
+                com.blindnav.app.i18n.SupportedLanguage.HINDI -> "${step.instruction}। $dist मीटर सीधे चलें।"
+                com.blindnav.app.i18n.SupportedLanguage.KANNADA -> "${step.instruction}. $dist ಮೀಟರ್ ನೇರವಾಗಿ ನಡೆಯಿರಿ."
+            }
         }
 
         // 2. Advance announcement when approaching turn (between 25 and 35 meters)
         if (dist in 25..35 && lastAnnouncementDistance > 40f) {
             lastAnnouncementDistance = progress.distanceToNextStepMeters
-            return "In $dist meters, ${step.instruction}."
+            return when (com.blindnav.app.i18n.LocaleManager.currentLanguage) {
+                com.blindnav.app.i18n.SupportedLanguage.ENGLISH -> "In $dist meters, ${step.instruction}."
+                com.blindnav.app.i18n.SupportedLanguage.HINDI -> "$dist मीटर में, ${step.instruction}।"
+                com.blindnav.app.i18n.SupportedLanguage.KANNADA -> "$dist ಮೀಟರ್‌ನಲ್ಲಿ, ${step.instruction}."
+            }
         }
 
         // 3. Immediate maneuver warning when turn is right ahead (between 8 and 15 meters)
         if (dist in 8..15 && lastAnnouncementDistance > 20f) {
             lastAnnouncementDistance = progress.distanceToNextStepMeters
-            return "Prepare to ${step.instruction}."
+            return when (com.blindnav.app.i18n.LocaleManager.currentLanguage) {
+                com.blindnav.app.i18n.SupportedLanguage.ENGLISH -> "Prepare to ${step.instruction}."
+                com.blindnav.app.i18n.SupportedLanguage.HINDI -> "${step.instruction} के लिए तैयार रहें।"
+                com.blindnav.app.i18n.SupportedLanguage.KANNADA -> "${step.instruction} ಗೆ ಸಿದ್ಧರಾಗಿ."
+            }
         }
 
         return null

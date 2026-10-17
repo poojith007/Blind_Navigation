@@ -135,12 +135,51 @@ object NavigationComponents {
             elevation = context.dpf(6)
             contentDescription = "Guardian SOS button. Tap to call guardian. Long press for instant emergency distress SMS."
             layoutParams = LinearLayout.LayoutParams(0, context.dp(52), 1.0f).apply {
-                setMargins(context.dp(8), 0, 0, 0)
+                setMargins(0, 0, 0, 0)
             }
             setOnClickListener { onClick() }
             if (onLongClick != null) {
                 setOnLongClickListener { onLongClick(); true }
             }
         }
+    }
+
+    /**
+     * Accessible Language Selector button.
+     * Shows current language (EN / HI / KN) with high contrast and minimum 48dp touch target.
+     */
+    fun createLanguageButton(
+        context: Context,
+        currentLanguage: com.blindnav.app.i18n.SupportedLanguage,
+        onClick: () -> Unit
+    ): Button {
+        val langCodeShort = when (currentLanguage) {
+            com.blindnav.app.i18n.SupportedLanguage.ENGLISH -> "EN"
+            com.blindnav.app.i18n.SupportedLanguage.HINDI -> "HI"
+            com.blindnav.app.i18n.SupportedLanguage.KANNADA -> "KN"
+        }
+        return Button(context).apply {
+            text = "🌐 $langCodeShort"
+            textSize = 14f
+            setTypeface(typeface, Typeface.BOLD)
+            setTextColor(Palette.white)
+            background = pill(context, Color.parseColor("#1B2A38"), Palette.info, strokeWidthDp = 2, radiusDp = 24)
+            elevation = context.dpf(6)
+            contentDescription = "Language selector. Current language: ${currentLanguage.displayName}. Tap to change language."
+            layoutParams = LinearLayout.LayoutParams(context.dp(72), context.dp(52)).apply {
+                setMargins(0, 0, context.dp(8), 0)
+            }
+            setOnClickListener { onClick() }
+        }
+    }
+
+    fun updateLanguageButton(button: Button, language: com.blindnav.app.i18n.SupportedLanguage) {
+        val langCodeShort = when (language) {
+            com.blindnav.app.i18n.SupportedLanguage.ENGLISH -> "EN"
+            com.blindnav.app.i18n.SupportedLanguage.HINDI -> "HI"
+            com.blindnav.app.i18n.SupportedLanguage.KANNADA -> "KN"
+        }
+        button.text = "🌐 $langCodeShort"
+        button.contentDescription = "Language selector. Current language: ${language.displayName}. Tap to change language."
     }
 }

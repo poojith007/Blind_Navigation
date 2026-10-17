@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ಬ್ಲೈಂಡ್‌ನೇವ್ ಎಐ</string>
+
+    <!-- Language Selector -->
+    <string name="language_button_label">ಭಾಷೆ</string>
+    <string name="language_button_desc">ಭಾಷಾ ಆಯ್ಕೆ. ಪ್ರಸ್ತುತ ಭಾಷೆ: %s. ಭಾಷೆ ಬದಲಾಯಿಸಲು ಟ್ಯಾಪ್ ಮಾಡಿ.</string>
+    <string name="select_language_title">ಭಾಷೆಯನ್ನು ಆಯ್ಕೆಮಾಡಿ / Select Language</string>
+    <string name="lang_english">English (ಇಂಗ್ಲಿಷ್ - en-IN)</string>
+    <string name="lang_hindi">हिंदी (ಹಿಂದಿ - hi-IN)</string>
+    <string name="lang_kannada">ಕನ್ನಡ (Kannada - kn-IN)</string>
+    <string name="lang_switched_en">Language set to English.</string>
+    <string name="lang_switched_hi">भाषा हिंदी में सेट की गई है।</string>
+    <string name="lang_switched_kn">ಭಾಷೆಯನ್ನು ಕನ್ನಡಕ್ಕೆ ಹೊಂದಿಸಲಾಗಿದೆ.</string>
+    <string name="lang_pack_missing">%s ಗಾಗಿ ಭಾಷಾ ಪ್ಯಾಕ್ ಲಭ್ಯವಿಲ್ಲ. ದಯವಿಟ್ಟು Google Speech Services ನಲ್ಲಿ ಡೌನ್‌ಲೋಡ್ ಮಾಡಿ.</string>
+    <string name="lang_not_supported">ಈ ಸಾಧನದಲ್ಲಿ %s ಭಾಷೆ ಬೆಂಬಲಿತವಾಗಿಲ್ಲ. ಇಂಗ್ಲಿಷ್ ಮುಂದುವರಿಸಲಾಗುತ್ತಿದೆ.</string>
+
+    <!-- Voice Assistant Status & Control -->
+    <string name="voice_btn_listening">🎙 ಧ್ವನಿ</string>
+    <string name="voice_btn_thinking">⋯ ಯೋಚಿಸುತ್ತಿದೆ</string>
+    <string name="voice_btn_speaking">🔊 ಮಾತನಾಡುತ್ತಿದೆ</string>
+    <string name="voice_btn_muted">🔇 ಮ್ಯೂಟ್</string>
+    <string name="voice_btn_unavailable">⚠ ಲಭ್ಯವಿಲ್ಲ</string>
+    <string name="voice_desc_listening">ಧ್ವನಿ ಸಹಾಯಕ ಸಕ್ರಿಯವಾಗಿದೆ ಮತ್ತು ಕೇಳಿಸಿಕೊಳ್ಳುತ್ತಿದೆ. ಆಜ್ಞೆಯನ್ನು ನೀಡಿ.</string>
+    <string name="voice_desc_thinking">ಧ್ವನಿ ಸಹಾಯಕ ನಿಮ್ಮ ಆಜ್ಞೆಯನ್ನು ಪ್ರಕ್ರಿಯೆಗೊಳಿಸುತ್ತಿದೆ.</string>
+    <string name="voice_desc_speaking">ಧ್ವನಿ ಸಹಾಯಕ ಮಾತನಾಡುತ್ತಿದೆ.</string>
+    <string name="voice_desc_muted">ಮೈಕ್ರೊಫೋನ್ ಮ್ಯೂಟ್ ಆಗಿದೆ. ಧ್ವನಿಯನ್ನು ಸಕ್ರಿಯಗೊಳಿಸಲು ಟ್ಯಾಪ್ ಮಾಡಿ.</string>
+    <string name="voice_desc_unavailable">ಈ ಸಾಧನದಲ್ಲಿ ಧ್ವನಿ ಗುರುತಿಸುವಿಕೆ ಲಭ್ಯವಿಲ್ಲ.</string>
+    <string name="prompt_listening">ಕೇಳಿಸಿಕೊಳ್ಳುತ್ತಿದ್ದೇನೆ.</string>
+    <string name="prompt_voice_active">ಧ್ವನಿ ಸಕ್ರಿಯವಾಗಿದೆ. ಕೇಳಿಸಿಕೊಳ್ಳುತ್ತಿದ್ದೇನೆ.</string>
+    <string name="prompt_mic_muted">ಮೈಕ್ರೊಫೋನ್ ಮ್ಯೂಟ್ ಆಗಿದೆ. ಮರುಸಕ್ರಿಯಗೊಳಿಸಲು ಧ್ವನಿ ಬಟನ್ ಒತ್ತಿ.</string>
+    <string name="speech_recognition_uninstalled">ಈ ಸಾಧನದಲ್ಲಿ ಧ್ವನಿ ಗುರುತಿಸುವಿಕೆ ಅಳವಡಿಸಲಾಗಿಲ್ಲ. ದಯವಿಟ್ಟು Google Speech Services ಅಳವಡಿಸಿ.</string>
+
+    <!-- Obstacle Warnings & Guidance -->
+    <string name="obstacle_stop_ahead">ನಿಲ್ಲಿಸಿ! ಮುಂದೆ ಅಡಚಣೆ ಇದೆ.</string>
+    <string name="obstacle_stop_vehicle_ahead">ನಿಲ್ಲಿಸಿ! ಮುಂದೆ ವಾಹನವಿದೆ.</string>
+    <string name="obstacle_stop_vehicle_right">ನಿಮ್ಮ ಬಲಭಾಗದಿಂದ ವಾಹನ ಬರುತ್ತಿದೆ. ನಿಲ್ಲಿಸಿ.</string>
+    <string name="obstacle_stop_vehicle_left">ನಿಮ್ಮ ಎಡಭಾಗದಿಂದ ವಾಹನ ಬರುತ್ತಿದೆ. ನಿಲ್ಲಿಸಿ.</string>
+    <string name="obstacle_caution_left">ಮುಂದೆ ಅಡಚಣೆ ಇದೆ. ಸ್ವಲ್ಪ ಎಡಕ್ಕೆ ಸಾಗಿ.</string>
+    <string name="obstacle_caution_right">ಮುಂದೆ ಅಡಚಣೆ ಇದೆ. ಸ್ವಲ್ಪ ಬಲಕ್ಕೆ ಸಾಗಿ.</string>
+    <string name="obstacle_keep_right">ನಿಮ್ಮ ಎಡಭಾಗದಲ್ಲಿ ಅಡಚಣೆ ಇದೆ. ಬಲಕ್ಕೆ ಇರಿ.</string>
+    <string name="obstacle_keep_left">ನಿಮ್ಮ ಬಲಭಾಗದಲ್ಲಿ ಅಡಚಣೆ ಇದೆ. ಎಡಕ್ಕೆ ಇರಿ.</string>
+    <string name="path_clear">ದಾರಿ ಸ್ಪಷ್ಟವಾಗಿದೆ. ನೇರವಾಗಿ ಮುಂದುವರಿಯಿರಿ.</string>
+    <string name="continue_straight">ನೇರವಾಗಿ ಸಾಗಿ.</string>
+    <string name="path_unclear">ದಾರಿ ಸ್ಪಷ್ಟವಾಗಿಲ್ಲ. ದಯವಿಟ್ಟು ನಿಲ್ಲಿಸಿ ಮತ್ತು ಸುತ್ತಮುತ್ತ ಗಮನಿಸಿ.</string>
+    <string name="siren_detected">ಹತ್ತಿರದಲ್ಲಿ ತುರ್ತು ಸೈರನ್ ಪತ್ತೆಯಾಗಿದೆ. ಎಚ್ಚರದಿಂದಿರಿ.</string>
+    <string name="banner_path_clear">ದಾರಿ ಸ್ಪಷ್ಟವಾಗಿದೆ</string>
+    <string name="banner_stop_obstacle">ನಿಲ್ಲಿಸಿ! ತಕ್ಷಣದ ಅಡಚಣೆ</string>
+    <string name="banner_caution_obstacle">ಎಚ್ಚರಿಕೆ! ಮುಂದೆ ಅಡಚಣೆ</string>
+    <string name="banner_siren">ಸೈರನ್ ಪತ್ತೆಯಾಗಿದೆ</string>
+
+    <!-- Navigation Guidance -->
+    <string name="nav_started_to">%s ಗೆ ಮಾರ್ಗದರ್ಶನ. ಪ್ರಾರಂಭಿಸಲು: ಪ್ರಾರಂಭಿಸಿ ಎಂದು ಹೇಳಿ.</string>
+    <string name="nav_stopped">ನಡಿಗೆ ನ್ಯಾವಿಗೇಷನ್ ನಿಲ್ಲಿಸಲಾಗಿದೆ.</string>
+    <string name="nav_paused">ನ್ಯಾವಿಗೇಷನ್ ವಿರಾಮಗೊಳಿಸಲಾಗಿದೆ. ಸಿದ್ಧವಾದಾಗ ಮುಂದುವರಿಸಿ ಎಂದು ಹೇಳಿ.</string>
+    <string name="nav_resumed">ನಡಿಗೆ ನ್ಯಾವಿಗೇಷನ್ ಪುನರಾರಂಭಿಸಲಾಗುತ್ತಿದೆ.</string>
+    <string name="nav_arrived">ನೀವು ನಿಮ್ಮ ಗಮ್ಯಸ್ಥಾನ, %s ತಲುಪಿದ್ದೀರಿ.</string>
+    <string name="nav_step_straight_to">%s ಕಡೆಗೆ ನೇರವಾಗಿ ನಡೆಯಿರಿ</string>
+    <string name="nav_step_walk_straight">%d ಮೀಟರ್ ನೇರವಾಗಿ ನಡೆಯಿರಿ.</string>
+    <string name="nav_step_in_meters">%1$d ಮೀಟರ್‌ನಲ್ಲಿ, %2$s.</string>
+    <string name="nav_step_prepare">%s ಗೆ ಸಿದ್ಧರಾಗಿ.</string>
+    <string name="maneuver_turn_right">ಬಲಕ್ಕೆ ತಿರುಗಿ</string>
+    <string name="maneuver_turn_left">ಎಡಕ್ಕೆ ತಿರುಗಿ</string>
+    <string name="maneuver_slight_right">ಸ್ವಲ್ಪ ಬಲಕ್ಕೆ ಇರಿ</string>
+    <string name="maneuver_slight_left">ಸ್ವಲ್ಪ ಎಡಕ್ಕೆ ಇರಿ</string>
+    <string name="maneuver_straight">ನೇರವಾಗಿ ಸಾಗಿ</string>
+    <string name="maneuver_arrive">ಗಮ್ಯಸ್ಥಾನವನ್ನು ತಲುಪಿ</string>
+
+    <!-- Emergency SOS & Guardian -->
+    <string name="sos_button_label">🛡 ತುರ್ತು</string>
+    <string name="sos_button_desc">ರಕ್ಷಕ ತುರ್ತು ಬಟನ್. ಕರೆ ಮಾಡಲು ಟ್ಯಾಪ್ ಮಾಡಿ. ತುರ್ತು ಸಂದೇಶಕ್ಕೆ ದೀರ್ಘವಾಗಿ ಒತ್ತಿರಿ.</string>
+    <string name="sos_calling_guardian">ಪೋಷಕ %s ಅವರಿಗೆ ಕರೆ ಮಾಡಲಾಗುತ್ತಿದೆ…</string>
+    <string name="sos_no_phone">ಪೋಷಕರಿಗೆ ಕರೆ ಮಾಡಲು ಸಾಧ್ಯವಿಲ್ಲ. ಯಾವುದೇ ಫೋನ್ ಸಂಖ್ಯೆ ನೀಡಿಲ್ಲ.</string>
+    <string name="sos_acquiring_location">ತುರ್ತು ಸಂದೇಶ ಕಳುಹಿಸಲು ಸ್ಥಳವನ್ನು ಪಡೆಯಲಾಗುತ್ತಿದೆ…</string>
+    <string name="sos_distress_message">ಬ್ಲೈಂಡ್ ನೆವಿಗೇಷನ್‌ನಿಂದ ತುರ್ತು ಸಂದೇಶ. ನನಗೆ ಸಹಾಯ ಬೇಕಾಗಬಹುದು. ನನ್ನ ಪ್ರಸ್ತುತ ಸ್ಥಳ: %s.</string>
+    <string name="sos_distress_no_location">ಬ್ಲೈಂಡ್ ನೆವಿಗೇಷನ್‌ನಿಂದ ತುರ್ತು ಸಂದೇಶ. ನನಗೆ ಸಹಾಯ ಬೇಕಾಗಬಹುದು. ನನ್ನ ಪ್ರಸ್ತುತ ಸ್ಥಳ ಲಭ್ಯವಾಗಿಲ್ಲ.</string>
+    <string name="fall_detected_warning">ಎಚ್ಚರಿಕೆ: ಬಿದ್ದಿರುವುದು ಪತ್ತೆಯಾಗಿದೆ! 10 ಸೆಕೆಂಡುಗಳಲ್ಲಿ ತುರ್ತು ಎಸ್‌ಒಎಸ್ ಪ್ರಚೋದನೆಯಾಗುತ್ತದೆ. ರದ್ದುಗೊಳಿಸಲು ಡಬಲ್ ಟ್ಯಾಪ್ ಮಾಡಿ ಅಥವಾ ರದ್ದುಮಾಡಿ ಎಂದು ಹೇಳಿ.</string>
+    <string name="fall_alert_sending">ತುರ್ತು ಪತನ ಎಚ್ಚರಿಕೆಯನ್ನು ಕಳುಹಿಸಲಾಗುತ್ತಿದೆ!</string>
+    <string name="fall_alert_canceled">ಪತನ ಎಚ್ಚರಿಕೆಯನ್ನು ರದ್ದುಗೊಳಿಸಲಾಗಿದೆ. ನೀವು ಸುರಕ್ಷಿತವಾಗಿದ್ದೀರಿ.</string>
+
+    <!-- Sensors & GPS -->
+    <string name="gps_weak">ಜಿಪಿಎಸ್ ಸಿಗ್ನಲ್ ದುರ್ಬಲವಾಗಿದೆ. ದಯವಿಟ್ಟು ನಿಧಾನವಾಗಿ ಸಾಗಿ.</string>
+    <string name="gps_unavailable">ಸ್ಥಳ ಅನಿಶ್ಚಿತವಾಗಿದೆ. ದಯವಿಟ್ಟು ನಿಲ್ಲಿಸಿ.</string>
+    <string name="gps_locating">📍 ಸ್ಥಳ ಹುಡುಕಲಾಗುತ್ತಿದೆ…</string>
+    <string name="facing_direction">%s ದಿಕ್ಕಿಗೆ ಮುಖ ಮಾಡಿ</string>
+    <string name="cardinal_north">ಉತ್ತರ</string>
+    <string name="cardinal_north_east">ಉತ್ತರ-ಪೂರ್ವ</string>
+    <string name="cardinal_east">ಪೂರ್ವ</string>
+    <string name="cardinal_south_east">ದಕ್ಷಿಣ-ಪೂರ್ವ</string>
+    <string name="cardinal_south">ದಕ್ಷಿಣ</string>
+    <string name="cardinal_south_west">ದಕ್ಷಿಣ-ಪಶ್ಚಿಮ</string>
+    <string name="cardinal_west">ಪಶ್ಚಿಮ</string>
+    <string name="cardinal_north_west">ಉತ್ತರ-ಪಶ್ಚಿಮ</string>
+</resources>

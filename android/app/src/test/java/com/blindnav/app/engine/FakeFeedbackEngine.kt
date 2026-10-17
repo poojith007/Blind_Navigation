@@ -24,6 +24,12 @@ class FakeFeedbackEngine : IFeedbackEngine {
     override var isVibrationEnabled: Boolean = true
     override val isSpeaking: Boolean = false
     override var onSpeakingStateChanged: ((isSpeaking: Boolean) -> Unit)? = null
+    override var currentLocale: java.util.Locale = java.util.Locale("en", "IN")
+
+    override fun setLanguage(locale: java.util.Locale): Int {
+        currentLocale = locale
+        return android.speech.tts.TextToSpeech.LANG_AVAILABLE
+    }
 
     override fun setSpeechRate(rate: Float) {
         currentSpeechRate = rate

@@ -15,7 +15,9 @@ interface IFeedbackEngine {
     var isVibrationEnabled: Boolean
     val isSpeaking: Boolean
     var onSpeakingStateChanged: ((isSpeaking: Boolean) -> Unit)?
+    val currentLocale: java.util.Locale
 
+    fun setLanguage(locale: java.util.Locale): Int
     fun setSpeechRate(rate: Float)
     fun setVoiceGuidanceEnabled(enable: Boolean)
     fun adjustVolume(increase: Boolean)
