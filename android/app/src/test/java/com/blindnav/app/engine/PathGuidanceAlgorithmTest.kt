@@ -56,7 +56,12 @@ class PathGuidanceAlgorithmTest {
     @Before
     fun setUp() {
         feedback = TestFeedbackEngine()
-        engine = ThreatPrioritizer(feedback, alertCooldownMs = 4000L, urgentAlertCooldownMs = 1500L)
+        engine = ThreatPrioritizer(
+            feedbackEngine = feedback,
+            alertCooldownMs = 4000L,
+            urgentAlertCooldownMs = 1500L,
+            minPersistenceFrames = 1
+        )
     }
 
     private fun createObject(

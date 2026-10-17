@@ -10,6 +10,8 @@ class FakeFeedbackEngine : IFeedbackEngine {
     data class SpokenEvent(val text: String, val priority: SpeechPriority)
 
     val spoken = mutableListOf<SpokenEvent>()
+    val urgentSpoken = mutableListOf<String>()
+    val normalSpoken = mutableListOf<String>()
     var dangerVibrations = 0
         private set
     var cautionVibrations = 0
@@ -38,6 +40,11 @@ class FakeFeedbackEngine : IFeedbackEngine {
         spoken.add(SpokenEvent(text, priority))
         lastSpokenMessage = text
         currentPriority = priority
+        when (priority) {
+            SpeechPriority.EMERGENCY -> urgentSpoken.add(text)
+            SpeechPriority.SAFETY_WARNING -> normalSpoken.add(text)
+            else -> normalSpoken.add(text)
+        }
     }
 
     override fun speakUrgent(text: String) = speakWithPriority(text, SpeechPriority.EMERGENCY)

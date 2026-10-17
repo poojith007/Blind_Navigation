@@ -51,6 +51,7 @@ class VoiceAssistant(
     private val onSendLocationAlert: (() -> Unit)? = null,
     private val onInquireDistance: (() -> Unit)? = null,
     private val onInquireObstacles: (() -> Unit)? = null,
+    private val onBeforeListeningStart: (() -> Unit)? = null,
     private val onListeningStarted: (() -> Unit)? = null,
     private val onListeningStopped: (() -> Unit)? = null,
     private val onTriggerEmergencySos: (() -> Unit)? = null,
@@ -63,7 +64,8 @@ class VoiceAssistant(
     private val onDownloadArea: ((areaName: String) -> Unit)? = null,
     private val onShowOfflineAreas: (() -> Unit)? = null,
     private val onDeleteOfflineArea: ((areaName: String) -> Unit)? = null,
-    private val onToggleDemoMode: (() -> Unit)? = null
+    private val onToggleDemoMode: (() -> Unit)? = null,
+    private val onFallbackSpeechRequested: (() -> Unit)? = null
 ) {
 
     private val tag = "VoiceAssistant"
@@ -111,6 +113,16 @@ class VoiceAssistant(
         }
     }
 
+    fun reinitialize() {
+        mainHandler.post {
+            recreateRecognizer()
+            if (speechRecognizer != null && !isMuted && isContinuousListeningActive) {
+                updateVoiceState(VoiceState.LISTENING)
+                scheduleRestart(100L)
+            }
+        }
+    }
+
     private fun recreateRecognizer() {
         if (isDestroyed) return
         try {
@@ -139,6 +151,14 @@ class VoiceAssistant(
             isMuted = false
         }
         mainHandler.removeCallbacks(restartRunnable)
+        if (speechRecognizer == null) {
+            recreateRecognizer()
+            if (speechRecognizer == null) {
+                updateVoiceState(VoiceState.UNAVAILABLE)
+                onFallbackSpeechRequested?.invoke()
+                return
+            }
+        }
         if (promptPromptSpoken) {
             feedbackEngine.speakNormal("Listening.")
         } else {
@@ -157,6 +177,7 @@ class VoiceAssistant(
             recreateRecognizer()
             if (speechRecognizer == null) {
                 updateVoiceState(VoiceState.UNAVAILABLE)
+                onFallbackSpeechRequested?.invoke()
                 return
             }
         }
@@ -177,6 +198,7 @@ class VoiceAssistant(
 
         mainHandler.post {
             try {
+                onBeforeListeningStart?.invoke()
                 speechRecognizer?.startListening(intent)
                 isListening = true
                 updateVoiceState(VoiceState.LISTENING)

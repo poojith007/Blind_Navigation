@@ -2,6 +2,8 @@ package com.blindnav.app.ml
 
 import android.graphics.RectF
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class DistanceEstimatorTest {
@@ -17,9 +19,6 @@ class DistanceEstimatorTest {
 
     @Test
     fun testDistanceEstimation_personStandard() {
-        // Person real height = 1.70m, focal constant = 0.85
-        // Box height fraction = 0.85
-        // Expected distance = (0.85 * 1.70) / 0.85 = 1.7m
         val box = createRect(0.2f, 0.1f, 0.6f, 0.95f) // height = 0.85f
         val distance = DistanceEstimator.estimateDistance("person", box)
         assertEquals(1.7f, distance, 0.1f)
@@ -30,9 +29,6 @@ class DistanceEstimatorTest {
 
     @Test
     fun testDistanceEstimation_carStandard() {
-        // Car real height = 1.50m, focal constant = 0.85
-        // Box height fraction = 0.50
-        // Expected distance = (0.85 * 1.50) / 0.50 = 2.55 -> ~2.6m
         val box = createRect(0.1f, 0.2f, 0.8f, 0.7f) // height = 0.50f
         val distance = DistanceEstimator.estimateDistance("car", box)
         assertEquals(2.6f, distance, 0.1f)
@@ -72,5 +68,27 @@ class DistanceEstimatorTest {
         // Any object far away (> 2.5m) -> SAFE
         assertEquals(ThreatLevel.SAFE, DistanceEstimator.determineThreatLevel(3.2f, "person"))
         assertEquals(ThreatLevel.SAFE, DistanceEstimator.determineThreatLevel(4.0f, "truck"))
+    }
+
+    @Test
+    fun testWalkingCorridor_outsideWhenFarToSide() {
+        val box = createRect(0.85f, 0.4f, 0.95f, 0.8f) // hugging the far right edge of frame
+        val distance = DistanceEstimator.estimateDistance("person", box)
+
+        assertFalse(
+            "An object off to the side shouldn't be flagged as in-path",
+            DistanceEstimator.isInWalkingCorridor(box, distance)
+        )
+    }
+
+    @Test
+    fun testWalkingCorridor_insideWhenCenteredAhead() {
+        val box = createRect(0.4f, 0.3f, 0.6f, 0.9f) // centered, tall (close)
+        val distance = DistanceEstimator.estimateDistance("person", box)
+
+        assertTrue(
+            "A centered object ahead should be flagged as in-path",
+            DistanceEstimator.isInWalkingCorridor(box, distance)
+        )
     }
 }
